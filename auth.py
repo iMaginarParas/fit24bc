@@ -17,19 +17,28 @@ from enum import Enum
 import httpx
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field, field_validator
+from dotenv import load_dotenv
 import re
+
+load_dotenv()  # loads .env file if present (local dev)
 
 router = APIRouter()
 
-# ── Config (set these in your environment / .env) ────────────────────────────
+# ── Config ───────────────────────────────────────────────────────────────────
 
-SUPABASE_URL: str = os.environ["SUPABASE_URL"]          # e.g. https://xxxx.supabase.co
-SUPABASE_ANON_KEY: str = os.environ["SUPABASE_ANON_KEY"]  # public anon key
+SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
 
-_SUPABASE_HEADERS = {
-    "apikey": SUPABASE_ANON_KEY,
-    "Content-Type": "application/json",
-}
+if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+    import sys
+    print("ERROR: SUPABASE_URL and SUPABASE_ANON_KEY must be set as environment variables.", file=sys.stderr)
+    sys.exit(1)  # fail fast with a clear message instead of a cryptic KeyError
+
+def _get_supabase_headers() -> dict:
+    return {
+        "apikey": SUPABASE_ANON_KEY,
+        "Content-Type": "application/json",
+    }
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -153,7 +162,7 @@ async def send_otp(body: SendOtpRequest, request: Request):
         payload = {"phone": body.phone, "channel": "sms"}
         url = f"{SUPABASE_URL}/auth/v1/otp"
 
-    resp = await client.post(url, headers=_SUPABASE_HEADERS, json=payload)
+    resp = await client.post(url, headers=_get_supabase_headers(), json=payload)
 
     if resp.status_code not in (200, 204):
         raise _supabase_error(resp)
@@ -189,7 +198,7 @@ async def verify_otp(body: VerifyOtpRequest, request: Request):
     }
 
     url = f"{SUPABASE_URL}/auth/v1/verify"
-    resp = await client.post(url, headers=_SUPABASE_HEADERS, json=payload)
+    resp = await client.post(url, headers=_get_supabase_headers(), json=payload)
 
     if resp.status_code != 200:
         raise _supabase_error(resp)
@@ -223,7 +232,7 @@ async def refresh_token(refresh_token: str, request: Request):
 
     payload = {"refresh_token": refresh_token}
     url = f"{SUPABASE_URL}/auth/v1/token?grant_type=refresh_token"
-    resp = await client.post(url, headers=_SUPABASE_HEADERS, json=payload)
+    resp = await client.post(url, headers=_get_supabase_headers(), json=payload)
 
     if resp.status_code != 200:
         raise _supabase_error(resp)
