@@ -204,8 +204,27 @@ async def verify_otp(body: VerifyOtpRequest, request: Request):
         raise _supabase_error(resp)
 
     data = resp.json()
-    sb_user = data.get("user", {})
-    sb_session = data.get("session", {})
+
+    # Supabase returns tokens nested under "session" OR flat at root — handle both.
+    sb_user    = data.get("user") or {}
+    sb_session = data.get("session") or {}
+
+    access_token  = sb_session.get("access_token")  or data.get("access_token")
+    refresh_token_ = sb_session.get("refresh_token") or data.get("refresh_token")
+    token_type    = sb_session.get("token_type")    or data.get("token_type", "bearer")
+    expires_in    = sb_session.get("expires_in")    or data.get("expires_in", 3600)
+
+    # user fields may also be at root when session is flat
+    if not sb_user:
+        sb_user = {"id": data.get("id", ""), "phone": data.get("phone", body.phone)}
+
+    if not access_token or not sb_user.get("id"):
+        import sys, json as _j
+        print(f"[verify-otp] unexpected shape: {_j.dumps(data)[:400]}", file=sys.stderr)
+        raise HTTPException(
+            status_code=502,
+            detail="Unexpected response from auth provider. Please try again.",
+        )
 
     return VerifyOtpResponse(
         message="Phone verified successfully.",
@@ -214,10 +233,10 @@ async def verify_otp(body: VerifyOtpRequest, request: Request):
             phone=sb_user.get("phone", body.phone),
         ),
         tokens=AuthTokens(
-            access_token=sb_session["access_token"],
-            refresh_token=sb_session["refresh_token"],
-            token_type=sb_session.get("token_type", "bearer"),
-            expires_in=sb_session.get("expires_in", 3600),
+            access_token=access_token,
+            refresh_token=refresh_token_,
+            token_type=token_type,
+            expires_in=expires_in,
         ),
     )
 
