@@ -19,6 +19,7 @@ create table if not exists public.user_profiles (
   focus_areas    text[]  default '{}',
   exercise_freq  text,
   exercise_types text[]  default '{}',
+  name           text,
   city           text,
   created_at     timestamptz default now(),
   updated_at     timestamptz default now()
@@ -85,6 +86,7 @@ def _sb_error(resp: httpx.Response) -> HTTPException:
 # ── Schemas ──────────────────────────────────────────────────────────────────
 
 class ProfileSetupRequest(BaseModel):
+    name:           Optional[str]       = None
     gender:         Optional[str]       = None
     age:            Optional[int]       = Field(None, ge=5,  le=120)
     weight_kg:      Optional[float]     = Field(None, ge=20, le=300)
@@ -99,6 +101,7 @@ class ProfileSetupRequest(BaseModel):
 class ProfileResponse(BaseModel):
     id:             str
     phone:          Optional[str]       = None
+    name:           Optional[str]       = None
     gender:         Optional[str]       = None
     age:            Optional[int]       = None
     weight_kg:      Optional[float]     = None
@@ -225,6 +228,7 @@ def _row_to_profile(row: dict) -> ProfileResponse:
     return ProfileResponse(
         id            = row.get("id",             ""),
         phone         = row.get("phone"),
+        name          = row.get("name"),
         gender        = row.get("gender"),
         age           = row.get("age"),
         weight_kg     = row.get("weight_kg"),
