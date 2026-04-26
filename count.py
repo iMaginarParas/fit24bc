@@ -192,7 +192,7 @@ async def sync_steps(
         "user_id":  user["id"],
         "log_date": log_date,
         "steps":    body.steps,
-        "synced_at": "now()",
+        # synced_at has a DB default; omit it to avoid storing literal "now()"
     }
 
     # UPSERT on (user_id, log_date) — always keep latest step value

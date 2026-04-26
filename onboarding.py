@@ -138,7 +138,7 @@ async def setup_profile(
         val = getattr(body, field)
         if val is not None:
             payload[field] = val
-    payload["updated_at"] = "now()"
+    # updated_at has a DB default/trigger; don't send "now()" string via REST
 
     url = f"{SUPABASE_URL}/rest/v1/user_profiles?on_conflict=id"
     resp = await client.post(
@@ -195,13 +195,13 @@ async def edit_profile(
     """Partial update — only sends non-null fields to Supabase."""
     client: httpx.AsyncClient = request.app.state.http_client
 
-    payload: dict = {"updated_at": "now()"}
+    payload: dict = {}  # updated_at handled by DB trigger
     for field in body.model_fields:
         val = getattr(body, field)
         if val is not None:
             payload[field] = val
 
-    if len(payload) == 1:   # only updated_at — nothing to do
+    if len(payload) == 0:   # nothing to update
         return await get_profile(request, user)
 
     url = (f"{SUPABASE_URL}/rest/v1/user_profiles"
