@@ -1,6 +1,7 @@
 """
 Fit24 Fitness App - FastAPI Backend
 Auth: Supabase Phone OTP via Twilio
+Steps: Supabase step_logs table
 """
 
 from fastapi import FastAPI
@@ -9,13 +10,13 @@ from contextlib import asynccontextmanager
 import httpx
 
 from auth import router as auth_router
+from count import router as steps_router   # ← new
 
 
 # ── App lifespan ────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Shared async HTTP client (reused across requests)
     app.state.http_client = httpx.AsyncClient(timeout=15.0)
     yield
     await app.state.http_client.aclose()
@@ -25,8 +26,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Fit24 Fitness API",
-    description="Mobile OTP signup/login via Supabase + Twilio",
-    version="1.0.0",
+    description="Mobile OTP signup/login via Supabase + Twilio · Step sync · Leaderboard",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -38,11 +39,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth_router, prefix="/auth", tags=["Auth"])
+app.include_router(auth_router,  prefix="/auth",  tags=["Auth"])
+app.include_router(steps_router, prefix="/steps", tags=["Steps"])   # ← new
 
 
 # ── Health check ─────────────────────────────────────────────────────────────
 
 @app.get("/health", tags=["Health"])
 async def health():
-    return {"status": "ok", "app": "Fit24"}
+    return {"status": "ok", "app": "Fit24", "version": "1.1.0"}
