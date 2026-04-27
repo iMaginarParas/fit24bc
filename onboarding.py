@@ -80,6 +80,8 @@ def _sb_error(resp: httpx.Response) -> HTTPException:
         detail = resp.json().get("message") or resp.text
     except Exception:
         detail = resp.text
+    import sys
+    print(f"[Supabase error] {resp.status_code}: {detail}", file=sys.stderr)
     return HTTPException(status_code=resp.status_code, detail=detail)
 
 
@@ -132,7 +134,9 @@ async def setup_profile(
     """
     client: httpx.AsyncClient = request.app.state.http_client
 
-    payload = {"id": user["id"], "phone": user["phone"]}
+    payload = {"id": user["id"]}
+    if user.get("phone"):
+        payload["phone"] = user["phone"]
     # Only include fields the user actually filled in
     for field in body.model_fields:
         val = getattr(body, field)
