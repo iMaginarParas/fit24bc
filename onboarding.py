@@ -244,10 +244,10 @@ async def upload_avatar(
     client: httpx.AsyncClient = request.app.state.http_client
     
     # 1. Upload to Storage
-    # We use a simple path: avatars/{user_id}/{filename}
-    # Note: Requires a public bucket named 'avatars' in Supabase
-    filename = f"{user['id']}_{file.filename}"
-    storage_url = f"{SUPABASE_URL}/storage/v1/object/avatars/{filename}"
+    # We use a subfolder: avatars/{user_id}/{filename}
+    # This allows for much cleaner RLS policies.
+    filename = file.filename
+    storage_url = f"{SUPABASE_URL}/storage/v1/object/avatars/{user['id']}/{filename}"
     
     file_content = await file.read()
     
@@ -270,9 +270,8 @@ async def upload_avatar(
         )
 
     # 2. Get Public URL
-    # Format: {SUPABASE_URL}/storage/v1/render/image/public/avatars/{filename}
-    # Or just the direct public link if bucket is public:
-    public_url = f"{SUPABASE_URL}/storage/v1/object/public/avatars/{filename}"
+    # Format: {SUPABASE_URL}/storage/v1/object/public/avatars/{user_id}/{filename}
+    public_url = f"{SUPABASE_URL}/storage/v1/object/public/avatars/{user['id']}/{filename}"
     
     # 3. Update Profile
     update_payload = {"avatar_url": public_url}
