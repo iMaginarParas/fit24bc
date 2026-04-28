@@ -31,8 +31,7 @@ SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
 
 if not SUPABASE_URL or not SUPABASE_ANON_KEY:
     import sys
-    print("ERROR: SUPABASE_URL and SUPABASE_ANON_KEY must be set as environment variables.", file=sys.stderr)
-    sys.exit(1)  # fail fast with a clear message instead of a cryptic KeyError
+    print("WARNING: SUPABASE_URL and SUPABASE_ANON_KEY are missing. Auth features will be disabled.", file=sys.stderr)
 
 def _get_supabase_headers() -> dict:
     return {
