@@ -14,6 +14,7 @@ from auth import router as auth_router
 from count import router as steps_router
 from onboarding import router as profile_router
 from admin import router as admin_router
+from config import router as config_router
 
 
 @asynccontextmanager
@@ -42,6 +43,7 @@ app.include_router(auth_router,    prefix="/auth",    tags=["Auth"])
 app.include_router(steps_router,   prefix="/steps",   tags=["Steps"])
 app.include_router(profile_router, prefix="/profile", tags=["Profile"])
 app.include_router(admin_router,   prefix="/admin",   tags=["Admin"])
+app.include_router(config_router,  prefix="/config",  tags=["Config"])
 
 
 @app.get("/health", tags=["Health"])

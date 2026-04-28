@@ -183,8 +183,8 @@ class ActivitySessionRequest(BaseModel):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _to_points(steps: int) -> int:
-    """5 pts per step — matches Flutter gamification formula."""
-    return steps * 5
+    """1 pt per step — matches Flutter gamification formula."""
+    return steps
 
 
 def _sb_error(resp: httpx.Response) -> HTTPException:

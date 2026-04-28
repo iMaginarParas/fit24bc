@@ -40,7 +40,7 @@ import os
 from typing import Optional, List
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status, File, UploadFile
 from pydantic import BaseModel, Field
 
 router = APIRouter()
@@ -98,6 +98,7 @@ class ProfileSetupRequest(BaseModel):
     exercise_freq:  Optional[str]       = None
     exercise_types: Optional[List[str]] = None
     city:           Optional[str]       = None
+    avatar_url:     Optional[str]       = None
 
 
 class ProfileResponse(BaseModel):
@@ -113,6 +114,7 @@ class ProfileResponse(BaseModel):
     exercise_freq:  Optional[str]       = None
     exercise_types: List[str]           = []
     city:           Optional[str]       = None
+    avatar_url:     Optional[str]       = None
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -226,6 +228,65 @@ async def edit_profile(
     return _row_to_profile({**{"id": user["id"], "phone": user["phone"]}, **row})
 
 
+@router.post(
+    "/me/avatar",
+    status_code=status.HTTP_200_OK,
+    summary="Upload profile picture",
+)
+async def upload_avatar(
+    request: Request,
+    file: UploadFile = File(...),
+    user: dict = Depends(_get_user),
+):
+    """
+    Uploads an image to Supabase Storage and updates avatar_url.
+    """
+    client: httpx.AsyncClient = request.app.state.http_client
+    
+    # 1. Upload to Storage
+    # We use a simple path: avatars/{user_id}/{filename}
+    # Note: Requires a public bucket named 'avatars' in Supabase
+    filename = f"{user['id']}_{file.filename}"
+    storage_url = f"{SUPABASE_URL}/storage/v1/object/avatars/{filename}"
+    
+    file_content = await file.read()
+    
+    upload_resp = await client.post(
+        storage_url,
+        headers={
+            **_user_headers(user["token"]),
+            "Content-Type": file.content_type or "image/jpeg",
+            "x-upsert": "true",
+        },
+        content=file_content,
+    )
+    
+    if upload_resp.status_code != 200:
+        # If bucket doesn't exist, this might fail. 
+        # For this demo, we'll try to fall back or just error with info.
+        raise HTTPException(
+            status_code=upload_resp.status_code, 
+            detail=f"Storage upload failed: {upload_resp.text}. Make sure 'avatars' bucket exists and is public."
+        )
+
+    # 2. Get Public URL
+    # Format: {SUPABASE_URL}/storage/v1/render/image/public/avatars/{filename}
+    # Or just the direct public link if bucket is public:
+    public_url = f"{SUPABASE_URL}/storage/v1/object/public/avatars/{filename}"
+    
+    # 3. Update Profile
+    update_payload = {"avatar_url": public_url}
+    db_url = f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{user['id']}"
+    
+    await client.patch(
+        db_url,
+        headers=_user_headers(user["token"]),
+        json=update_payload,
+    )
+    
+    return {"avatar_url": public_url}
+
+
 # ── Helper ───────────────────────────────────────────────────────────────────
 
 def _row_to_profile(row: dict) -> ProfileResponse:
@@ -242,4 +303,5 @@ def _row_to_profile(row: dict) -> ProfileResponse:
         exercise_freq = row.get("exercise_freq"),
         exercise_types= row.get("exercise_types", []) or [],
         city          = row.get("city"),
+        avatar_url    = row.get("avatar_url"),
     )
