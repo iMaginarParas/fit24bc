@@ -8,7 +8,16 @@ Profile: Supabase user_profiles table (onboarding + edit)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import os
+import sys
 import httpx
+
+# Validate critical environment variables
+REQUIRED_VARS = ["SUPABASE_URL", "SUPABASE_ANON_KEY"]
+missing = [v for v in REQUIRED_VARS if not os.getenv(v)]
+if missing:
+    print(f"ERROR: Missing environment variables: {', '.join(missing)}", file=sys.stderr)
+    print("Please set these in your Railway project settings.", file=sys.stderr)
 
 from auth import router as auth_router
 from count import router as steps_router

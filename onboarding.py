@@ -45,8 +45,8 @@ from pydantic import BaseModel, Field
 
 router = APIRouter()
 
-SUPABASE_URL: str = os.environ["SUPABASE_URL"]
-SUPABASE_ANON_KEY: str = os.environ["SUPABASE_ANON_KEY"]
+SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
 
 
 def _anon_headers() -> dict:
