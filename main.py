@@ -13,6 +13,7 @@ import httpx
 from auth import router as auth_router
 from count import router as steps_router
 from onboarding import router as profile_router
+from admin import router as admin_router
 
 
 @asynccontextmanager
@@ -40,6 +41,7 @@ app.add_middleware(
 app.include_router(auth_router,    prefix="/auth",    tags=["Auth"])
 app.include_router(steps_router,   prefix="/steps",   tags=["Steps"])
 app.include_router(profile_router, prefix="/profile", tags=["Profile"])
+app.include_router(admin_router,   prefix="/admin",   tags=["Admin"])
 
 
 @app.get("/health", tags=["Health"])

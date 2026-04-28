@@ -32,8 +32,28 @@ create policy "users manage own logs"
   with check (auth.uid() = user_id);
 
 -- Index for leaderboard query
+-- Index for leaderboard query
 create index if not exists step_logs_date_steps
   on public.step_logs (log_date desc, steps desc);
+
+create table if not exists public.activity_sessions (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references auth.users(id) on delete cascade,
+  type        int not null, -- 0: walk, 1: run, 2: cycle
+  distance    numeric(10,2) not null default 0,
+  duration    integer not null default 0,
+  steps       integer not null default 0,
+  calories    integer not null default 0,
+  route       jsonb default '[]',
+  created_at  timestamptz not null default now()
+);
+
+alter table public.activity_sessions enable row level security;
+
+create policy "users manage own sessions"
+  on public.activity_sessions for all
+  using  (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 ─────────────────────────────────────────────────────────────
 """
 
@@ -41,7 +61,7 @@ from __future__ import annotations
 
 import os
 from datetime import date, timedelta
-from typing import Optional
+from typing import Optional, List, Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -149,6 +169,15 @@ class LeaderEntry(BaseModel):
 class LeaderboardResponse(BaseModel):
     week_start: str
     entries: list[LeaderEntry]
+
+
+class ActivitySessionRequest(BaseModel):
+    type: int
+    distance: float
+    duration: int
+    steps: int
+    calories: int
+    route: List[dict]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -370,3 +399,41 @@ async def get_leaderboard(request: Request):
         week_start = str(week_start),
         entries    = entries,
     )
+
+
+@router.post("/sessions", status_code=status.HTTP_201_CREATED)
+async def save_session(
+    body: ActivitySessionRequest,
+    request: Request,
+    user: dict = Depends(_get_user),
+):
+    """Save a GPS activity session."""
+    client: httpx.AsyncClient = request.app.state.http_client
+    payload = {
+        "user_id": user["id"],
+        "type": body.type,
+        "distance": body.distance,
+        "duration": body.duration,
+        "steps": body.steps,
+        "calories": body.calories,
+        "route": body.route,
+    }
+    url = f"{SUPABASE_URL}/rest/v1/activity_sessions"
+    resp = await client.post(url, headers=_user_headers(user["token"]), json=payload)
+    if resp.status_code not in (200, 201):
+        raise _sb_error(resp)
+    return {"status": "saved"}
+
+
+@router.get("/sessions")
+async def get_sessions(
+    request: Request,
+    user: dict = Depends(_get_user),
+):
+    """Fetch user's recent sessions."""
+    client: httpx.AsyncClient = request.app.state.http_client
+    url = f"{SUPABASE_URL}/rest/v1/activity_sessions?user_id=eq.{user['id']}&order=created_at.desc&limit=20"
+    resp = await client.get(url, headers=_user_headers(user["token"]))
+    if resp.status_code != 200:
+        raise _sb_error(resp)
+    return resp.json()
