@@ -21,6 +21,13 @@ create table if not exists public.user_profiles (
   exercise_types text[]  default '{}',
   name           text,
   city           text,
+  avatar_url     text,
+  tracking_dark_map       boolean default false,
+  tracking_audio_feedback boolean default true,
+  tracking_countdown_timer boolean default false,
+  tracking_keep_screen_on  boolean default false,
+  tracking_auto_pause      boolean default false,
+  tracking_auto_resume     boolean default true,
   created_at     timestamptz default now(),
   updated_at     timestamptz default now()
 );
@@ -99,6 +106,12 @@ class ProfileSetupRequest(BaseModel):
     exercise_types: Optional[List[str]] = None
     city:           Optional[str]       = None
     avatar_url:     Optional[str]       = None
+    tracking_dark_map:       Optional[bool] = None
+    tracking_audio_feedback: Optional[bool] = None
+    tracking_countdown_timer: Optional[bool] = None
+    tracking_keep_screen_on:  Optional[bool] = None
+    tracking_auto_pause:      Optional[bool] = None
+    tracking_auto_resume:     Optional[bool] = None
 
 
 class ProfileResponse(BaseModel):
@@ -115,6 +128,12 @@ class ProfileResponse(BaseModel):
     exercise_types: List[str]           = []
     city:           Optional[str]       = None
     avatar_url:     Optional[str]       = None
+    tracking_dark_map:       bool                = False
+    tracking_audio_feedback: bool                = True
+    tracking_countdown_timer: bool               = False
+    tracking_keep_screen_on:  bool               = False
+    tracking_auto_pause:      bool               = False
+    tracking_auto_resume:     bool               = True
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -286,6 +305,70 @@ async def upload_avatar(
     return {"avatar_url": public_url}
 
 
+@router.delete(
+    "/me",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete user account and all data",
+)
+async def delete_account(
+    request: Request,
+    user: dict = Depends(_get_user),
+):
+    """
+    Deletes the user profile and all associated data.
+    """
+    client: httpx.AsyncClient = request.app.state.http_client
+    url = f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{user['id']}"
+    resp = await client.delete(url, headers=_user_headers(user["token"]))
+    if resp.status_code not in (200, 204):
+        raise _sb_error(resp)
+    return None
+
+
+@router.post("/follow/{target_id}")
+async def follow_user(target_id: str, request: Request, user: dict = Depends(_get_user)):
+    """Follow another user."""
+    client: httpx.AsyncClient = request.app.state.http_client
+    url = f"{SUPABASE_URL}/rest/v1/user_follows"
+    resp = await client.post(url, headers=_user_headers(user["token"]), json={
+        "follower_id": user["id"],
+        "following_id": target_id
+    })
+    if resp.status_code not in (200, 201):
+        raise _sb_error(resp)
+    return {"status": "followed"}
+
+
+@router.delete("/follow/{target_id}")
+async def unfollow_user(target_id: str, request: Request, user: dict = Depends(_get_user)):
+    """Unfollow another user."""
+    client: httpx.AsyncClient = request.app.state.http_client
+    url = f"{SUPABASE_URL}/rest/v1/user_follows?follower_id=eq.{user['id']}&following_id=eq.{target_id}"
+    resp = await client.delete(url, headers=_user_headers(user["token"]))
+    if resp.status_code not in (200, 204):
+        raise _sb_error(resp)
+    return {"status": "unfollowed"}
+
+
+@router.get("/public/{target_id}", response_model=ProfileResponse)
+async def get_public_profile(target_id: str, request: Request, user: dict = Depends(_get_user)):
+    """Fetch another user's public profile and stats."""
+    client: httpx.AsyncClient = request.app.state.http_client
+    url = f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{target_id}&limit=1"
+    resp = await client.get(url, headers=_user_headers(user["token"]))
+    if resp.status_code != 200 or not resp.json():
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check if the current user is following this person
+    follow_url = f"{SUPABASE_URL}/rest/v1/user_follows?follower_id=eq.{user['id']}&following_id=eq.{target_id}"
+    f_resp = await client.get(follow_url, headers=_user_headers(user["token"]))
+    is_following = f_resp.status_code == 200 and len(f_resp.json()) > 0
+    
+    profile = _row_to_profile(resp.json()[0])
+    # Add extra metadata if needed (here we just return the profile)
+    return profile
+
+
 # ── Helper ───────────────────────────────────────────────────────────────────
 
 def _row_to_profile(row: dict) -> ProfileResponse:
@@ -303,4 +386,10 @@ def _row_to_profile(row: dict) -> ProfileResponse:
         exercise_types= row.get("exercise_types", []) or [],
         city          = row.get("city"),
         avatar_url    = row.get("avatar_url"),
+        tracking_dark_map       = row.get("tracking_dark_map",       False),
+        tracking_audio_feedback = row.get("tracking_audio_feedback", True),
+        tracking_countdown_timer = row.get("tracking_countdown_timer", False),
+        tracking_keep_screen_on  = row.get("tracking_keep_screen_on",  False),
+        tracking_auto_pause      = row.get("tracking_auto_pause",      False),
+        tracking_auto_resume     = row.get("tracking_auto_resume",     True),
     )
