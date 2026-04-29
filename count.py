@@ -303,6 +303,53 @@ async def get_today(
 
 
 @router.get(
+    "/stats",
+    status_code=status.HTTP_200_OK,
+    summary="Get lifetime total steps and points",
+)
+async def get_stats(
+    request: Request,
+    user: dict = Depends(_get_user),
+):
+    """Returns lifetime totals for steps and fit points."""
+    client: httpx.AsyncClient = request.app.state.http_client
+
+    # Query all step logs for this user
+    # Note: For massive scale, you'd want a cached 'stats' table, 
+    # but for now, summing step_logs is fine.
+    url = (
+        f"{SUPABASE_URL}/rest/v1/step_logs"
+        f"?user_id=eq.{user['id']}"
+        f"&select=steps"
+    )
+    resp = await client.get(url, headers=_user_headers(user["token"]))
+    if resp.status_code != 200:
+        raise _sb_error(resp)
+
+    rows = resp.json()
+    total_steps = sum(r.get("steps", 0) for r in rows)
+    
+    # Also include session steps
+    url_sessions = (
+        f"{SUPABASE_URL}/rest/v1/activity_sessions"
+        f"?user_id=eq.{user['id']}"
+        f"&select=steps"
+    )
+    resp_s = await client.get(url_sessions, headers=_user_headers(user["token"]))
+    session_steps = 0
+    if resp_s.status_code == 200:
+        session_steps = sum(r.get("steps", 0) for r in resp_s.json())
+
+    combined_total = total_steps + session_steps
+
+    return {
+        "total_steps": combined_total,
+        "total_fit_points": _to_points(combined_total),
+        "total_sessions": len(resp_s.json()) if resp_s.status_code == 200 else 0
+    }
+
+
+@router.get(
     "/history",
     response_model=HistoryResponse,
     status_code=status.HTTP_200_OK,
