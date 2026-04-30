@@ -239,12 +239,18 @@ async def edit_profile(
         },
         json=payload,
     )
-    if resp.status_code not in (200, 204):
+    if resp.status_code == 204:
+        return await get_profile(request, user)
+
+    if resp.status_code != 200:
         raise _sb_error(resp)
 
-    rows = resp.json()
-    row  = rows[0] if isinstance(rows, list) and rows else payload
-    return _row_to_profile({**{"id": user["id"], "phone": user["phone"]}, **row})
+    try:
+        rows = resp.json()
+        row  = rows[0] if isinstance(rows, list) and rows else payload
+        return _row_to_profile({**{"id": user["id"], "phone": user["phone"]}, **row})
+    except Exception:
+        return await get_profile(request, user)
 
 
 @router.post(
@@ -265,7 +271,9 @@ async def upload_avatar(
     # 1. Upload to Storage
     # We use a subfolder: avatars/{user_id}/{filename}
     # This allows for much cleaner RLS policies.
-    filename = file.filename
+    import time
+    timestamp = int(time.time())
+    filename = f"{timestamp}_{file.filename}"
     storage_url = f"{SUPABASE_URL}/storage/v1/object/avatars/{user['id']}/{filename}"
     
     file_content = await file.read()
