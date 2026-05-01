@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Fit24 Fitness API",
     description="OTP Auth · Step Sync · Leaderboard · User Profiles",
-    version="1.2.3",
+    version="1.2.4",
     lifespan=lifespan,
 )
 
@@ -57,8 +57,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth_router,    prefix="/auth",    tags=["Auth"])
 app.include_router(steps_router,   tags=["Steps"])
+app.include_router(auth_router,    prefix="/auth",    tags=["Auth"])
 app.include_router(profile_router, prefix="/profile", tags=["Profile"])
 app.include_router(admin_router,   prefix="/admin",   tags=["Admin"])
 app.include_router(config_router,  prefix="/config",  tags=["Config"])
@@ -67,4 +67,4 @@ app.include_router(challenges_router, prefix="/challenges", tags=["Challenges"])
 
 @app.get("/health", tags=["Health"])
 async def health():
-    return {"status": "ok", "app": "Fit24", "version": "1.2.3"}
+    return {"status": "ok", "app": "Fit24", "version": "1.2.4"}

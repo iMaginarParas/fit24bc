@@ -197,6 +197,11 @@ def _sb_error(resp: httpx.Response) -> HTTPException:
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+@router.get("/health")
+async def steps_health():
+    return {"status": "ok", "router": "steps"}
+
+
 @router.post("/sync", response_model=StepSyncResponse)
 async def sync_steps(
     body: StepSyncRequest,
