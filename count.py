@@ -197,12 +197,7 @@ def _sb_error(resp: httpx.Response) -> HTTPException:
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
-@router.post(
-    "/sync",
-    response_model=StepSyncResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Upsert step count for a given date",
-)
+@router.post("/sync", response_model=StepSyncResponse)
 async def sync_steps(
     body: StepSyncRequest,
     request: Request,
