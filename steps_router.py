@@ -68,7 +68,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field, field_validator
 
 # ── Router ────────────────────────────────────────────────────────────────────
-router = APIRouter()
+router = APIRouter(prefix="/steps")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
