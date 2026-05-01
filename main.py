@@ -41,14 +41,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-@app.on_event("startup")
-async def list_routes():
-    print("Listing all registered routes:")
-    for route in app.routes:
-        methods = getattr(route, "methods", "N/A")
-        print(f"ROUTE: {route.path} [{methods}]")
-
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
