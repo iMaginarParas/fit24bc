@@ -208,7 +208,7 @@ async def sync_steps(
     Called by the Flutter app whenever step data changes (e.g. every minute or
     on app foreground). Uses Supabase's UPSERT so repeated calls are safe.
 
-    Returns the stored record enriched with calories, distance, and fit points.
+    Returns the stored record enriched with calories, distance, and Fit24.
     """
     client: httpx.AsyncClient = request.app.state.http_client
     log_date = str(body.log_date or date.today())
@@ -307,7 +307,7 @@ async def get_stats(
     request: Request,
     user: dict = Depends(_get_user),
 ):
-    """Returns lifetime totals for steps and fit points."""
+    """Returns lifetime totals for steps and Fit24."""
     client: httpx.AsyncClient = request.app.state.http_client
 
     # Query all step logs for this user
