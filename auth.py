@@ -129,6 +129,10 @@ class UserProfile(BaseModel):
     phone: str
 
 
+class GoogleSignRequest(BaseModel):
+    id_token: str = Field(..., description="Google ID Token")
+
+
 class VerifyOtpResponse(BaseModel):
     message: str
     user: UserProfile
@@ -230,6 +234,60 @@ async def verify_otp(body: VerifyOtpRequest, request: Request):
         user=UserProfile(
             id=sb_user["id"],
             phone=sb_user.get("phone", body.phone),
+        ),
+        tokens=AuthTokens(
+            access_token=access_token,
+            refresh_token=refresh_token_,
+            token_type=token_type,
+            expires_in=expires_in,
+        ),
+    )
+
+
+@router.post(
+    "/google",
+    response_model=VerifyOtpResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Sign in with Google",
+)
+async def google_signin(body: GoogleSignRequest, request: Request):
+    """
+    Exchanges a Google ID Token for Supabase session tokens.
+    """
+    client: httpx.AsyncClient = request.app.state.http_client
+
+    payload = {
+        "id_token": body.id_token,
+        "provider": "google",
+    }
+
+    url = f"{SUPABASE_URL}/auth/v1/token?grant_type=id_token"
+    resp = await client.post(url, headers=_get_supabase_headers(), json=payload)
+
+    if resp.status_code != 200:
+        raise _supabase_error(resp)
+
+    data = resp.json()
+
+    sb_user = data.get("user") or {}
+    sb_session = data.get("session") or {}
+
+    access_token = sb_session.get("access_token") or data.get("access_token")
+    refresh_token_ = sb_session.get("refresh_token") or data.get("refresh_token")
+    token_type = sb_session.get("token_type") or data.get("token_type", "bearer")
+    expires_in = sb_session.get("expires_in") or data.get("expires_in", 3600)
+
+    if not access_token or not sb_user.get("id"):
+        raise HTTPException(
+            status_code=502,
+            detail="Unexpected response from auth provider.",
+        )
+
+    return VerifyOtpResponse(
+        message="Google sign-in successful.",
+        user=UserProfile(
+            id=sb_user["id"],
+            phone=sb_user.get("phone") or sb_user.get("email") or "google_user",
         ),
         tokens=AuthTokens(
             access_token=access_token,

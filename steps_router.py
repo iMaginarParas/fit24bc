@@ -19,6 +19,7 @@ create table if not exists public.step_logs (
   steps       integer not null default 0,
   calories    integer generated always as (steps / 20) stored,
   distance_m  integer generated always as (steps * 75 / 100) stored,
+  fit_points  integer not null default 0,
   synced_at   timestamptz not null default now(),
   unique (user_id, log_date)
 );
@@ -44,6 +45,7 @@ create table if not exists public.activity_sessions (
   duration    integer not null default 0,
   steps       integer not null default 0,
   calories    integer not null default 0,
+  fit_points  integer not null default 0,
   route       jsonb default '[]',
   created_at  timestamptz not null default now()
 );
@@ -172,11 +174,9 @@ class LeaderboardResponse(BaseModel):
 
 
 class ActivitySessionRequest(BaseModel):
-    type: int
-    distance: float
-    duration: int
     steps: int
     calories: int
+    fit_points: int
     route: List[dict]
 
 
@@ -263,10 +263,11 @@ async def sync_steps(
 )
 async def get_today(
     request: Request,
+    log_date: Optional[date] = None,
     user: dict = Depends(_get_user),
 ):
     client: httpx.AsyncClient = request.app.state.http_client
-    today = date.today().isoformat()
+    today = str(log_date or date.today())
 
     url = (
         f"{SUPABASE_URL}/rest/v1/step_logs"
@@ -325,23 +326,26 @@ async def get_stats(
     rows = resp.json()
     total_steps = sum(r.get("steps", 0) for r in rows)
     
-    # Also include session steps
+    # Fetch session points
     url_sessions = (
         f"{SUPABASE_URL}/rest/v1/activity_sessions"
         f"?user_id=eq.{user['id']}"
-        f"&select=steps"
+        f"&select=fit_points"
     )
     resp_s = await client.get(url_sessions, headers=_user_headers(user["token"]))
-    session_steps = 0
+    session_points = 0
+    num_sessions = 0
     if resp_s.status_code == 200:
-        session_steps = sum(r.get("steps", 0) for r in resp_s.json())
+        sessions = resp_s.json()
+        num_sessions = len(sessions)
+        session_points = sum(s.get("fit_points", 0) for s in sessions)
 
-    combined_total = total_steps + session_steps
+    total_points = _to_points(total_steps) + session_points
 
     return {
-        "total_steps": combined_total,
-        "total_fit_points": _to_points(combined_total),
-        "total_sessions": len(resp_s.json()) if resp_s.status_code == 200 else 0
+        "total_steps": total_steps,
+        "total_fit_points": total_points,
+        "total_sessions": num_sessions
     }
 
 
@@ -373,21 +377,42 @@ async def get_history(
     rows  = resp.json()
     total = sum(r.get("steps", 0) for r in rows)
 
-    day_logs = [
-        DayLog(
-            log_date   = r["log_date"],
-            steps      = r.get("steps", 0),
-            calories   = r.get("calories", r.get("steps", 0) // 20),
-            distance_m = r.get("distance_m", r.get("steps", 0) * 75 // 100),
-            fit_points = _to_points(r.get("steps", 0)),
-        )
-        for r in rows
-    ]
+    # Fetch sessions for the same period to add points
+    url_sess = (
+        f"{SUPABASE_URL}/rest/v1/activity_sessions"
+        f"?user_id=eq.{user['id']}&created_at=gte.{since}"
+        f"&select=fit_points,created_at"
+    )
+    resp_sess = await client.get(url_sess, headers=_user_headers(user["token"]))
+    session_data = resp_sess.json() if resp_sess.status_code == 200 else []
+    
+    # Map session points to dates
+    sess_points_map: dict[str, int] = {}
+    for s in session_data:
+        d_str = s["created_at"][:10] # yyyy-mm-dd
+        sess_points_map[d_str] = sess_points_map.get(d_str, 0) + s.get("fit_points", 0)
+
+    day_logs = []
+    total_points = 0
+    for r in rows:
+        d_str = r["log_date"]
+        steps = r.get("steps", 0)
+        s_pts = sess_points_map.get(d_str, 0)
+        pts = _to_points(steps) + s_pts
+        total_points += pts
+        
+        day_logs.append(DayLog(
+            log_date   = d_str,
+            steps      = steps,
+            calories   = r.get("calories", steps // 20),
+            distance_m = r.get("distance_m", steps * 75 // 100),
+            fit_points = pts,
+        ))
 
     return HistoryResponse(
         days              = day_logs,
         total_steps       = total,
-        total_fit_points  = _to_points(total),
+        total_fit_points  = total_points,
     )
 
 
@@ -395,24 +420,35 @@ async def get_history(
     "/leaderboard",
     response_model=LeaderboardResponse,
     status_code=status.HTTP_200_OK,
-    summary="Weekly leaderboard (top 20 users by steps)",
+    summary="Leaderboard (Daily/Weekly/Last Week)",
 )
-async def get_leaderboard(request: Request):
+async def get_leaderboard(
+    request: Request,
+    period: str = "weekly",  # "daily" or "weekly"
+    offset: int = 0         # 0 for current, 1 for previous
+):
     """
-    Public leaderboard – no auth required. Aggregates the current calendar
-    week (Mon–Sun). Uses service role so RLS is bypassed.
+    Public leaderboard. Aggregates steps and fit_points for a given period.
+    offset=0: Current period (This Week / Today)
+    offset=1: Previous period (Last Week / Yesterday)
     """
     client: httpx.AsyncClient = request.app.state.http_client
-    today     = date.today()
-    week_start = today - timedelta(days=today.weekday())  # Monday
-    week_end   = week_start + timedelta(days=6)
+    today = date.today()
+    
+    if period == "daily":
+        start_date = today - timedelta(days=offset)
+        end_date   = start_date
+    else:  # weekly
+        # Monday of the target week
+        current_monday = today - timedelta(days=today.weekday())
+        start_date = current_monday - timedelta(weeks=offset)
+        end_date   = start_date + timedelta(days=6)
 
-    # Supabase REST doesn't support GROUP BY natively, so we fetch rows and
-    # aggregate in Python. For large datasets, replace with a Supabase RPC.
+    # Fetch step logs for the range
     url = (
         f"{SUPABASE_URL}/rest/v1/step_logs"
-        f"?log_date=gte.{week_start}&log_date=lte.{week_end}"
-        f"&order=steps.desc&limit=500"
+        f"?log_date=gte.{start_date}&log_date=lte.{end_date}"
+        f"&order=steps.desc&limit=1000"
     )
     resp = await client.get(url, headers=_service_headers())
     if resp.status_code != 200:
@@ -422,24 +458,44 @@ async def get_leaderboard(request: Request):
 
     # Aggregate per user
     totals: dict[str, int] = {}
+    points: dict[str, int] = {}
     for r in rows:
         uid = r["user_id"]
-        totals[uid] = totals.get(uid, 0) + r.get("steps", 0)
+        s = r.get("steps", 0)
+        totals[uid] = totals.get(uid, 0) + s
+        points[uid] = points.get(uid, 0) + _to_points(s)
 
-    sorted_users = sorted(totals.items(), key=lambda x: x[1], reverse=True)[:20]
+    # Also add session points for the range
+    # Convert dates to ISO timestamps for activity_sessions filtering
+    start_ts = f"{start_date}T00:00:00Z"
+    end_ts   = f"{end_date}T23:59:59Z"
+    
+    url_sess = (
+        f"{SUPABASE_URL}/rest/v1/activity_sessions"
+        f"?created_at=gte.{start_ts}&created_at=lte.{end_ts}"
+        f"&select=user_id,fit_points"
+    )
+    resp_sess = await client.get(url_sess, headers=_service_headers())
+    if resp_sess.status_code == 200:
+        for s in resp_sess.json():
+            uid = s["user_id"]
+            points[uid] = points.get(uid, 0) + s.get("fit_points", 0)
+
+    # Sort by total points
+    sorted_users = sorted(points.items(), key=lambda x: x[1], reverse=True)[:50]
 
     entries = [
         LeaderEntry(
             rank       = i + 1,
             user_id    = uid,
-            steps      = steps,
-            fit_points = _to_points(steps),
+            steps      = totals.get(uid, 0),
+            fit_points = pts,
         )
-        for i, (uid, steps) in enumerate(sorted_users)
+        for i, (uid, pts) in enumerate(sorted_users)
     ]
 
     return LeaderboardResponse(
-        week_start = str(week_start),
+        week_start = str(start_date),
         entries    = entries,
     )
 
@@ -459,6 +515,7 @@ async def save_session(
         "duration": body.duration,
         "steps": body.steps,
         "calories": body.calories,
+        "fit_points": body.fit_points,
         "route": body.route,
     }
     url = f"{SUPABASE_URL}/rest/v1/activity_sessions"

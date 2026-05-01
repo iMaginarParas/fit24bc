@@ -80,8 +80,7 @@ async def claim_reward(challenge_id: str, request: Request, user: dict = Depends
         raise HTTPException(status_code=400, detail="Already claimed today")
 
     # 3. Verify Requirement (Check user's daily stats)
-    # Here we check the 'user_daily_steps' or similar table
-    stats_url = f"{SUPABASE_URL}/rest/v1/user_daily_steps?user_id=eq.{user['id']}&log_date=eq.{today}&limit=1"
+    stats_url = f"{SUPABASE_URL}/rest/v1/step_logs?user_id=eq.{user['id']}&log_date=eq.{today}&limit=1"
     s_resp = await client.get(stats_url, headers=_user_headers(user["token"]))
     user_steps = 0
     if s_resp.status_code == 200 and s_resp.json():
