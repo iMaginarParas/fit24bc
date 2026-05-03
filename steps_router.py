@@ -174,10 +174,13 @@ class LeaderboardResponse(BaseModel):
 
 
 class ActivitySessionRequest(BaseModel):
-    steps: int
-    calories: int
-    fit_points: int
-    route: List[dict]
+    type: int = 0          # 0: walk, 1: run, 2: cycle
+    steps: int = 0
+    distance: float = 0.0
+    duration: int = 0
+    calories: int = 0
+    fit_points: int = 0
+    route: List[dict] = []
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
