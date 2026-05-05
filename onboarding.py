@@ -86,7 +86,12 @@ async def _get_user(request: Request) -> dict:
     if resp.status_code != 200:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     d = resp.json()
-    return {"id": d["id"], "phone": d.get("phone", ""), "token": token}
+    return {
+        "id": d["id"], 
+        "phone": d.get("phone"), 
+        "email": d.get("email"), 
+        "token": token
+    }
 
 
 def _sb_error(resp: httpx.Response) -> HTTPException:
@@ -352,9 +357,11 @@ async def upload_avatar(
     # 3. Update Profile (Upsert to handle cases where profile record doesn't exist yet)
     update_payload = {
         "id": user["id"],
-        "phone": user["phone"],
         "avatar_url": public_url
     }
+    if user.get("phone"): update_payload["phone"] = user["phone"]
+    # Email is not currently a column in user_profiles based on docstring, but if it was we'd add it here.
+    
     db_url = f"{SUPABASE_URL}/rest/v1/user_profiles"
     
     await client.post(
