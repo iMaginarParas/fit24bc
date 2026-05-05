@@ -349,13 +349,20 @@ async def upload_avatar(
     # Format: {SUPABASE_URL}/storage/v1/object/public/avatars/{user_id}/{filename}
     public_url = f"{SUPABASE_URL}/storage/v1/object/public/avatars/{user['id']}/{filename}"
     
-    # 3. Update Profile
-    update_payload = {"avatar_url": public_url}
-    db_url = f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{user['id']}"
+    # 3. Update Profile (Upsert to handle cases where profile record doesn't exist yet)
+    update_payload = {
+        "id": user["id"],
+        "phone": user["phone"],
+        "avatar_url": public_url
+    }
+    db_url = f"{SUPABASE_URL}/rest/v1/user_profiles"
     
-    await client.patch(
+    await client.post(
         db_url,
-        headers=_user_headers(user["token"]),
+        headers={
+            **_user_headers(user["token"]),
+            "Prefer": "resolution=merge-duplicates",
+        },
         json=update_payload,
     )
     

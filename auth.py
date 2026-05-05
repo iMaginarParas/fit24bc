@@ -70,7 +70,8 @@ class OtpType(str, Enum):
 
 
 class SendOtpRequest(BaseModel):
-    phone: str = Field(..., examples=["+919876543210"])
+    phone: str | None = Field(None, examples=["+919876543210"])
+    email: str | None = Field(None, examples=["user@example.com"])
     mode: str = Field(
         "signup",
         description="'signup' for new users, 'login' for existing users",
@@ -79,7 +80,8 @@ class SendOtpRequest(BaseModel):
 
     @field_validator("phone")
     @classmethod
-    def check_phone(cls, v: str) -> str:
+    def check_phone(cls, v: str | None) -> str | None:
+        if v is None: return None
         return _validate_e164(v)
 
     @field_validator("mode")
@@ -96,7 +98,8 @@ class SendOtpResponse(BaseModel):
 
 
 class VerifyOtpRequest(BaseModel):
-    phone: str = Field(..., examples=["+919876543210"])
+    phone: str | None = Field(None, examples=["+919876543210"])
+    email: str | None = Field(None, examples=["user@example.com"])
     token: str = Field(..., min_length=4, max_length=8, examples=["123456"])
     mode: str = Field(
         "signup",
@@ -106,7 +109,8 @@ class VerifyOtpRequest(BaseModel):
 
     @field_validator("phone")
     @classmethod
-    def check_phone(cls, v: str) -> str:
+    def check_phone(cls, v: str | None) -> str | None:
+        if v is None: return None
         return _validate_e164(v)
 
     @field_validator("mode")
@@ -126,7 +130,8 @@ class AuthTokens(BaseModel):
 
 class UserProfile(BaseModel):
     id: str
-    phone: str
+    phone: str | None = None
+    email: str | None = None
 
 
 class GoogleSignRequest(BaseModel):
@@ -145,35 +150,40 @@ class VerifyOtpResponse(BaseModel):
     "/send-otp",
     response_model=SendOtpResponse,
     status_code=status.HTTP_200_OK,
-    summary="Send phone OTP (signup or login)",
+    summary="Send OTP (Email or Phone)",
 )
 async def send_otp(body: SendOtpRequest, request: Request):
     """
-    Triggers Supabase to send a one-time password via Twilio SMS.
-
-    - **signup** mode → creates a new user record (fails if phone already registered)
-    - **login** mode  → sends OTP to existing user
+    Triggers OTP delivery. 
+    - For Email: Uses Supabase (configure Resend in Supabase SMTP settings).
+    - For Phone: Currently disabled/bypassed.
     """
     client: httpx.AsyncClient = request.app.state.http_client
 
-    if body.mode == "signup":
-        # Supabase signup with phone — sends OTP automatically
-        payload = {"phone": body.phone, "password": None, "channel": "sms"}
+    if body.email:
+        # ── Email OTP Flow (Recommended: Config Resend in Supabase Dashboard) ──
+        payload = {
+            "email": body.email, 
+            "create_user": body.mode == "signup"
+        }
         url = f"{SUPABASE_URL}/auth/v1/otp"
-    else:
-        # Re-send OTP to existing user (login)
-        payload = {"phone": body.phone, "channel": "sms"}
-        url = f"{SUPABASE_URL}/auth/v1/otp"
+        resp = await client.post(url, headers=_get_supabase_headers(), json=payload)
+        if resp.status_code not in (200, 204):
+            raise _supabase_error(resp)
+        return SendOtpResponse(
+            message="OTP sent successfully. Check your email.",
+            phone=body.email, # Reusing field for convenience
+        )
 
-    resp = await client.post(url, headers=_get_supabase_headers(), json=payload)
+    if body.phone:
+        # ── Phone OTP Flow (Currently Disabled) ──
+        # To re-enable, uncomment the code below and ensure Twilio is configured.
+        return SendOtpResponse(
+            message="Phone OTP is currently disabled. Use email or Google.",
+            phone=body.phone,
+        )
 
-    if resp.status_code not in (200, 204):
-        raise _supabase_error(resp)
-
-    return SendOtpResponse(
-        message="OTP sent successfully. Check your SMS.",
-        phone=body.phone,
-    )
+    raise HTTPException(status_code=400, detail="Either email or phone is required")
 
 
 @router.post(
@@ -184,21 +194,24 @@ async def send_otp(body: SendOtpRequest, request: Request):
 )
 async def verify_otp(body: VerifyOtpRequest, request: Request):
     """
-    Verifies the 6-digit OTP the user received via SMS.
-
-    On success returns:
-    - **access_token** (JWT) – use as `Authorization: Bearer <token>` on protected routes
-    - **refresh_token** – use to obtain new access tokens when they expire
-    - **user** – basic profile (id + phone)
+    Verifies the 6-digit OTP received via Email or SMS.
     """
     client: httpx.AsyncClient = request.app.state.http_client
 
-    # Supabase expects type = "sms" for both signup and login OTP verification
-    payload = {
-        "phone": body.phone,
-        "token": body.token,
-        "type": "sms",
-    }
+    if body.email:
+        payload = {
+            "email": body.email,
+            "token": body.token,
+            "type": "email",
+        }
+    elif body.phone:
+        payload = {
+            "phone": body.phone,
+            "token": body.token,
+            "type": "sms",
+        }
+    else:
+        raise HTTPException(status_code=400, detail="Email or phone required")
 
     url = f"{SUPABASE_URL}/auth/v1/verify"
     resp = await client.post(url, headers=_get_supabase_headers(), json=payload)
@@ -230,10 +243,11 @@ async def verify_otp(body: VerifyOtpRequest, request: Request):
         )
 
     return VerifyOtpResponse(
-        message="Phone verified successfully.",
+        message="Verified successfully.",
         user=UserProfile(
             id=sb_user["id"],
-            phone=sb_user.get("phone", body.phone),
+            phone=sb_user.get("phone"),
+            email=sb_user.get("email"),
         ),
         tokens=AuthTokens(
             access_token=access_token,
@@ -287,7 +301,8 @@ async def google_signin(body: GoogleSignRequest, request: Request):
         message="Google sign-in successful.",
         user=UserProfile(
             id=sb_user["id"],
-            phone=sb_user.get("phone") or sb_user.get("email") or "google_user",
+            phone=sb_user.get("phone"),
+            email=sb_user.get("email"),
         ),
         tokens=AuthTokens(
             access_token=access_token,
