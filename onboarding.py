@@ -202,6 +202,18 @@ async def setup_profile(
                 headers=_user_headers(user["token"]),
                 json={"points": new_pts}
             )
+            
+            # 3. Create a notification for the referrer
+            await client.post(
+                f"{SUPABASE_URL}/rest/v1/user_notifications",
+                headers=_user_headers(user["token"]),
+                json={
+                    "user_id": referrer['id'],
+                    "title": "🎉 Referral Bonus!",
+                    "message": f"Someone joined using your code. You earned 10,000 coins!",
+                    "type": "referral"
+                }
+            )
 
     resp = await client.post(
         url,
@@ -438,9 +450,43 @@ async def get_public_profile(target_id: str, request: Request, user: dict = Depe
     f_resp = await client.get(follow_url, headers=_user_headers(user["token"]))
     is_following = f_resp.status_code == 200 and len(f_resp.json()) > 0
     
-    profile = _row_to_profile(resp.json()[0])
-    # Add extra metadata if needed (here we just return the profile)
     return profile
+    
+@router.get("/me/notifications")
+async def get_my_notifications(request: Request, user: dict = Depends(_get_user)):
+    """Fetch notifications for the current user."""
+    client: httpx.AsyncClient = request.app.state.http_client
+    url = f"{SUPABASE_URL}/rest/v1/user_notifications?user_id=eq.{user['id']}&order=created_at.desc"
+    resp = await client.get(url, headers=_user_headers(user["token"]))
+    if resp.status_code != 200:
+        raise _sb_error(resp)
+    return resp.json()
+
+@router.get("/me/network")
+async def get_my_network(request: Request, user: dict = Depends(_get_user)):
+    """Fetch the list of users referred by the current user."""
+    client: httpx.AsyncClient = request.app.state.http_client
+    
+    # 1. Get the current user's referral code
+    profile = await get_profile(request, user)
+    code = profile.referral_code
+    if not code:
+        return []
+        
+    # 2. Find everyone who was referred by this code
+    url = f"{SUPABASE_URL}/rest/v1/user_profiles?referred_by=eq.{code}&order=created_at.asc"
+    resp = await client.get(url, headers=_user_headers(user["token"]))
+    if resp.status_code != 200:
+        raise _sb_error(resp)
+    
+    # Return basic info (name, joined_at) to avoid leaking private data
+    network = []
+    for row in resp.json():
+        network.append({
+            "name": row.get("name") or "New User",
+            "joined_at": row.get("created_at")
+        })
+    return network
 
 
 # ── Helper ───────────────────────────────────────────────────────────────────
