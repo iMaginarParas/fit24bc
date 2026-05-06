@@ -149,6 +149,7 @@ class ProfileResponse(BaseModel):
     tracking_auto_resume:     bool               = True
     referral_code:          Optional[str]      = None
     referred_by:            Optional[str]      = None
+    points:                 int                 = 0
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -568,4 +569,5 @@ def _row_to_profile(row: dict) -> ProfileResponse:
         tracking_auto_resume     = row.get("tracking_auto_resume",     True),
         referral_code            = row.get("referral_code"),
         referred_by              = row.get("referred_by"),
+        points                   = row.get("points", 0) or 0,
     )

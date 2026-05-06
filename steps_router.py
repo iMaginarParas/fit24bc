@@ -353,6 +353,17 @@ async def get_stats(
 
     total_points = _to_points(total_steps) + session_points
 
+    # Fetch bonus points from user_profiles (referrals, spin-win, etc.)
+    url_profile = f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{user['id']}&select=points"
+    resp_p = await client.get(url_profile, headers=_user_headers(user["token"]))
+    bonus_points = 0
+    if resp_p.status_code == 200:
+        p_data = resp_p.json()
+        if p_data:
+            bonus_points = p_data[0].get("points", 0) or 0
+    
+    total_points += bonus_points
+
     return {
         "total_steps": total_steps,
         "total_fit_points": total_points,
