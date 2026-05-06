@@ -508,6 +508,28 @@ async def get_my_network(request: Request, user: dict = Depends(_get_user)):
         })
     return network
 
+@router.post("/spin-win")
+async def record_spin_win(request: Request, payload: dict, user: dict = Depends(_get_user)):
+    """Record points won from the daily spin wheel."""
+    client: httpx.AsyncClient = request.app.state.http_client
+    points_won = payload.get("points", 0)
+    
+    if points_won <= 0:
+        return {"success": True, "message": "No points awarded"}
+        
+    # 1. Fetch profile to check last spin
+    profile = await get_profile(request, user)
+    
+    # 2. Add points
+    new_total = (profile.points or 0) + points_won
+    url = f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{user['id']}"
+    resp = await client.patch(url, headers=_user_headers(user["token"]), json={"points": new_total})
+    
+    if resp.status_code != 204 and resp.status_code != 200:
+        raise _sb_error(resp)
+        
+    return {"success": True, "new_total": new_total}
+
 
 # ── Helper ───────────────────────────────────────────────────────────────────
 
