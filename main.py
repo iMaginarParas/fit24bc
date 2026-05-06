@@ -13,7 +13,7 @@ import sys
 import httpx
 
 # Validate critical environment variables
-REQUIRED_VARS = ["SUPABASE_URL", "SUPABASE_ANON_KEY"]
+REQUIRED_VARS = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"]
 missing = [v for v in REQUIRED_VARS if not os.getenv(v)]
 if missing:
     print(f"ERROR: Missing environment variables: {', '.join(missing)}", file=sys.stderr)

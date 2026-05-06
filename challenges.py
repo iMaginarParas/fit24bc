@@ -112,7 +112,7 @@ async def claim_reward(challenge_id: str, request: Request, user: dict = Depends
     current_coins = profile_row.get("points") or 0
     new_coins = current_coins + challenge["reward_coins"]
 
-    await client.patch(profile_url, headers=_service_headers(), json={"points": new_coins})
+    await client.patch(profile_url, headers=_user_headers(user["token"]), json={"points": new_coins})
 
     # 5. Record Claim
     await client.post(f"{SUPABASE_URL}/rest/v1/user_claims", headers=_service_headers(), json={
@@ -150,7 +150,7 @@ async def claim_daily_checkin(request: Request, user: dict = Depends(_get_user))
     current_coins = profile_row.get("points") or 0
     new_coins = current_coins + 200
 
-    await client.patch(profile_url, headers=_service_headers(), json={"points": new_coins})
+    await client.patch(profile_url, headers=_user_headers(user["token"]), json={"points": new_coins})
 
     # 3. Record Claim
     # We use service headers to bypass foreign key checks or ensure insert works
