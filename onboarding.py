@@ -531,6 +531,18 @@ async def record_spin_win(request: Request, payload: dict, user: dict = Depends(
     return {"success": True, "new_total": new_total}
 
 
+@router.post("/notifications/{notification_id}/read")
+async def mark_notification_read(notification_id: str, request: Request, user: dict = Depends(_get_user)):
+    """Mark a specific notification as read."""
+    client: httpx.AsyncClient = request.app.state.http_client
+    url = f"{SUPABASE_URL}/rest/v1/user_notifications?id=eq.{notification_id}&user_id=eq.{user['id']}"
+    resp = await client.patch(url, headers=_user_headers(user["token"]), json={"is_read": True})
+    
+    if resp.status_code != 204 and resp.status_code != 200:
+        raise _sb_error(resp)
+        
+    return {"success": True}
+
 # ── Helper ───────────────────────────────────────────────────────────────────
 
 def _row_to_profile(row: dict) -> ProfileResponse:
