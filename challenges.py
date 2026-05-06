@@ -13,12 +13,20 @@ router = APIRouter()
 
 SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
+SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
 def _user_headers(token: str) -> dict:
     return {
         "apikey": SUPABASE_ANON_KEY,
         "Content-Type": "application/json",
         "Authorization": f"Bearer {token}",
+    }
+
+def _service_headers() -> dict:
+    return {
+        "apikey": SUPABASE_SERVICE_KEY or SUPABASE_ANON_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY or SUPABASE_ANON_KEY}",
+        "Content-Type": "application/json"
     }
 
 async def _get_user(request: Request) -> dict:
@@ -100,13 +108,14 @@ async def claim_reward(challenge_id: str, request: Request, user: dict = Depends
     # 4. Award Coins (Update user_profiles)
     profile_url = f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{user['id']}"
     p_resp = await client.get(profile_url, headers=_user_headers(user["token"]))
-    current_coins = p_resp.json()[0].get("points", 0) if p_resp.json() else 0
+    profile_row = p_resp.json()[0] if p_resp.json() else {}
+    current_coins = profile_row.get("points") or 0
     new_coins = current_coins + challenge["reward_coins"]
 
-    await client.patch(profile_url, headers=_user_headers(user["token"]), json={"points": new_coins})
+    await client.patch(profile_url, headers=_service_headers(), json={"points": new_coins})
 
     # 5. Record Claim
-    await client.post(f"{SUPABASE_URL}/rest/v1/user_claims", headers=_user_headers(user["token"]), json={
+    await client.post(f"{SUPABASE_URL}/rest/v1/user_claims", headers=_service_headers(), json={
         "user_id": user["id"],
         "challenge_id": challenge_id,
         "date": today,
@@ -121,26 +130,50 @@ async def claim_daily_checkin(request: Request, user: dict = Depends(_get_user))
     client: httpx.AsyncClient = request.app.state.http_client
     today = datetime.now().strftime("%Y-%m-%d")
     
+    # We use a hardcoded UUID for the daily check-in challenge
+    # This must exist in the challenges table or we must use a constant ID
+    # For now, we'll use a specific string if the DB allows, but better to use a real ID.
+    # Logic: Search user_claims for (user_id, date, 'daily_checkin')
+    # Since challenge_id is a UUID, we'll use a dedicated UUID for daily checkin.
+    DAILY_CHECKIN_ID = "00000000-0000-0000-0000-000000000001"
+    
     # 1. Check if already claimed today
-    claim_check_url = f"{SUPABASE_URL}/rest/v1/user_claims?user_id=eq.{user['id']}&challenge_id=eq.daily_checkin&date=eq.{today}"
-    cc_resp = await client.get(claim_check_url, headers=_user_headers(user["token"]))
+    claim_check_url = f"{SUPABASE_URL}/rest/v1/user_claims?user_id=eq.{user['id']}&challenge_id=eq.{DAILY_CHECKIN_ID}&date=eq.{today}"
+    cc_resp = await client.get(claim_check_url, headers=_service_headers())
     if cc_resp.status_code == 200 and cc_resp.json():
         raise HTTPException(status_code=400, detail="Already checked in today")
 
     # 2. Award Coins (Update user_profiles)
     profile_url = f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{user['id']}"
     p_resp = await client.get(profile_url, headers=_user_headers(user["token"]))
-    current_coins = p_resp.json()[0].get("points", 0) if p_resp.json() else 0
+    profile_row = p_resp.json()[0] if p_resp.json() else {}
+    current_coins = profile_row.get("points") or 0
     new_coins = current_coins + 200
 
-    await client.patch(profile_url, headers=_user_headers(user["token"]), json={"points": new_coins})
+    await client.patch(profile_url, headers=_service_headers(), json={"points": new_coins})
 
     # 3. Record Claim
-    await client.post(f"{SUPABASE_URL}/rest/v1/user_claims", headers=_user_headers(user["token"]), json={
+    # We use service headers to bypass foreign key checks or ensure insert works
+    claim_payload = {
         "user_id": user["id"],
-        "challenge_id": "daily_checkin",
+        "challenge_id": DAILY_CHECKIN_ID,
         "date": today,
         "reward": 200
-    })
+    }
+    
+    # First, ensure the 'Daily Check-in' challenge exists in the challenges table
+    check_chal = await client.get(f"{SUPABASE_URL}/rest/v1/challenges?id=eq.{DAILY_CHECKIN_ID}", headers=_service_headers())
+    if check_chal.status_code == 200 and not check_chal.json():
+        await client.post(f"{SUPABASE_URL}/rest/v1/challenges", headers=_service_headers(), json={
+            "id": DAILY_CHECKIN_ID,
+            "title": "Daily Check-in",
+            "description": "Points for opening the app daily",
+            "reward_coins": 200,
+            "requirement_type": "checkin",
+            "requirement_value": 1,
+            "is_daily": True
+        })
+
+    await client.post(f"{SUPABASE_URL}/rest/v1/user_claims", headers=_service_headers(), json=claim_payload)
 
     return ClaimResponse(success=True, message="Daily check-in reward claimed!", new_balance=new_coins)

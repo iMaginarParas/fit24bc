@@ -53,6 +53,7 @@ router = APIRouter()
 
 SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
+SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
 
 def _anon_headers() -> dict:
@@ -61,6 +62,14 @@ def _anon_headers() -> dict:
 
 def _user_headers(token: str) -> dict:
     return {**_anon_headers(), "Authorization": f"Bearer {token}"}
+
+
+def _service_headers() -> dict:
+    return {
+        "apikey": SUPABASE_SERVICE_KEY or SUPABASE_ANON_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY or SUPABASE_ANON_KEY}",
+        "Content-Type": "application/json"
+    }
 
 
 # ── Auth dependency (same pattern as count.py) ───────────────────────────────
@@ -206,11 +215,14 @@ async def setup_profile(
                 # Logic: Direct sponsor (Level 0) gets 10k, others get 1k
                 reward_pts = 10000 if level == 0 else 1000
                 
-                # Award points
-                new_pts = referrer.get("points", 0) + reward_pts
+                # Award points (Use Service Role to bypass RLS and allow cross-user updates)
+                current_pts = referrer.get("points", 0)
+                if current_pts is None: current_pts = 0
+                new_pts = current_pts + reward_pts
+                
                 await client.patch(
                     f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{referrer['id']}",
-                    headers=_user_headers(user["token"]),
+                    headers=_service_headers(),
                     json={"points": new_pts}
                 )
                 
@@ -220,7 +232,7 @@ async def setup_profile(
                 
                 await client.post(
                     f"{SUPABASE_URL}/rest/v1/user_notifications",
-                    headers=_user_headers(user["token"]),
+                    headers=_service_headers(),
                     json={
                         "user_id": referrer['id'],
                         "title": "🎉 Referral Bonus!" if level == 0 else "📈 Network Growth!",
