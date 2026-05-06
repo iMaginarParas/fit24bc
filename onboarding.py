@@ -190,21 +190,22 @@ async def setup_profile(
     
     # 2. Check if applying a new referral
     if payload.get("referred_by") and not existing.referred_by:
-        # Give points to referrer
-        ref_url = f"{SUPABASE_URL}/rest/v1/user_profiles?referral_code=eq.{payload['referred_by']}"
-        ref_resp = await client.get(ref_url, headers=_user_headers(user["token"]))
-        if ref_resp.status_code == 200 and ref_resp.json():
-            referrer = ref_resp.json()[0]
+        current_ref_code = payload["referred_by"]
+        level = 0
+        max_levels = 10 # Up to Level 10
+
+        while current_ref_code and level < max_levels:
+            # Find the owner of this referral code
+            ref_url = f"{SUPABASE_URL}/rest/v1/user_profiles?referral_code=eq.{current_ref_code}"
+            ref_resp = await client.get(ref_url, headers=_user_headers(user["token"]))
             
-            # Count existing referrals for this person
-            count_url = f"{SUPABASE_URL}/rest/v1/user_profiles?referred_by=eq.{payload['referred_by']}&select=id"
-            count_resp = await client.get(count_url, headers=_user_headers(user["token"]))
-            existing_count = len(count_resp.json()) if count_resp.status_code == 200 else 0
-            
-            # Tiered logic: 1st gets 10k, next 9 get 1k
-            reward_pts = 10000 if existing_count == 0 else (1000 if existing_count < 10 else 0)
-            
-            if reward_pts > 0:
+            if ref_resp.status_code == 200 and ref_resp.json():
+                referrer = ref_resp.json()[0]
+                
+                # Logic: Direct sponsor (Level 0) gets 10k, others get 1k
+                reward_pts = 10000 if level == 0 else 1000
+                
+                # Award points
                 new_pts = referrer.get("points", 0) + reward_pts
                 await client.patch(
                     f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{referrer['id']}",
@@ -212,18 +213,27 @@ async def setup_profile(
                     json={"points": new_pts}
                 )
                 
-                # 3. Create a notification for the referrer
+                # Create notification
                 new_user_name = body.name or "A friend"
+                msg = f"{new_user_name} joined your network. You earned {reward_pts:,} coins!" if level > 0 else f"{new_user_name} joined using your code. You earned {reward_pts:,} coins!"
+                
                 await client.post(
                     f"{SUPABASE_URL}/rest/v1/user_notifications",
                     headers=_user_headers(user["token"]),
                     json={
                         "user_id": referrer['id'],
-                        "title": "🎉 Referral Bonus!",
-                        "message": f"{new_user_name} joined using your code. You earned {reward_pts:,} coins!",
+                        "title": "🎉 Referral Bonus!" if level == 0 else "📈 Network Growth!",
+                        "message": msg,
                         "type": "referral"
                     }
                 )
+
+                # Move up the chain: Find who referred this referrer
+                current_ref_code = referrer.get("referred_by")
+                level += 1
+            else:
+                # Chain broken or code invalid
+                break
 
     resp = await client.post(
         url,
