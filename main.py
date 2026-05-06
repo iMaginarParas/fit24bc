@@ -13,8 +13,13 @@ import sys
 import httpx
 
 # Validate critical environment variables
-REQUIRED_VARS = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"]
+REQUIRED_VARS = ["SUPABASE_URL", "SUPABASE_ANON_KEY"]
 missing = [v for v in REQUIRED_VARS if not os.getenv(v)]
+
+# Service key check (can be named either way)
+if not os.getenv("SUPABASE_SERVICE_ROLE_KEY") and not os.getenv("SUPABASE_SERVICE_KEY"):
+    missing.append("SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SERVICE_KEY)")
+
 if missing:
     print(f"ERROR: Missing environment variables: {', '.join(missing)}", file=sys.stderr)
     print("Please set these in your Railway project settings.", file=sys.stderr)
