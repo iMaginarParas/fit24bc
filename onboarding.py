@@ -195,26 +195,35 @@ async def setup_profile(
         ref_resp = await client.get(ref_url, headers=_user_headers(user["token"]))
         if ref_resp.status_code == 200 and ref_resp.json():
             referrer = ref_resp.json()[0]
-            # Add 10000 points to referrer
-            new_pts = referrer.get("points", 0) + 10000
-            await client.patch(
-                f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{referrer['id']}",
-                headers=_user_headers(user["token"]),
-                json={"points": new_pts}
-            )
             
-            # 3. Create a notification for the referrer
-            new_user_name = body.name or "A friend"
-            await client.post(
-                f"{SUPABASE_URL}/rest/v1/user_notifications",
-                headers=_user_headers(user["token"]),
-                json={
-                    "user_id": referrer['id'],
-                    "title": "🎉 Referral Bonus!",
-                    "message": f"{new_user_name} joined using your code. You earned 10,000 coins!",
-                    "type": "referral"
-                }
-            )
+            # Count existing referrals for this person
+            count_url = f"{SUPABASE_URL}/rest/v1/user_profiles?referred_by=eq.{payload['referred_by']}&select=id"
+            count_resp = await client.get(count_url, headers=_user_headers(user["token"]))
+            existing_count = len(count_resp.json()) if count_resp.status_code == 200 else 0
+            
+            # Tiered logic: 1st gets 10k, next 9 get 1k
+            reward_pts = 10000 if existing_count == 0 else (1000 if existing_count < 10 else 0)
+            
+            if reward_pts > 0:
+                new_pts = referrer.get("points", 0) + reward_pts
+                await client.patch(
+                    f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{referrer['id']}",
+                    headers=_user_headers(user["token"]),
+                    json={"points": new_pts}
+                )
+                
+                # 3. Create a notification for the referrer
+                new_user_name = body.name or "A friend"
+                await client.post(
+                    f"{SUPABASE_URL}/rest/v1/user_notifications",
+                    headers=_user_headers(user["token"]),
+                    json={
+                        "user_id": referrer['id'],
+                        "title": "🎉 Referral Bonus!",
+                        "message": f"{new_user_name} joined using your code. You earned {reward_pts:,} coins!",
+                        "type": "referral"
+                    }
+                )
 
     resp = await client.post(
         url,
