@@ -48,3 +48,22 @@ BEGIN
         CREATE POLICY "everyone can view notifications" ON public.notifications FOR SELECT USING (true);
     END IF;
 END $$;
+
+-- 4. Admin Activity Logs (Audit Trail)
+CREATE TABLE IF NOT EXISTS public.admin_logs (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  admin_id    uuid REFERENCES auth.users(id),
+  action      text NOT NULL,
+  target      text, -- e.g., 'User: Aditya', 'Config: SpinWheel'
+  details     jsonb,
+  created_at  timestamptz DEFAULT now()
+);
+
+ALTER TABLE public.admin_logs ENABLE ROW LEVEL SECURITY;
+-- Note: In production, only admins should see this. For now, we'll allow select.
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'everyone can view logs') THEN
+        CREATE POLICY "everyone can view logs" ON public.admin_logs FOR SELECT USING (true);
+    END IF;
+END $$;

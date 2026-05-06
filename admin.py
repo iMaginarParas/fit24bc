@@ -86,6 +86,17 @@ class ConfigUpdate(BaseModel):
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+# --- Helpers ---
+async def _log_action(request: Request, action: str, target: str, details: dict = None):
+    client: httpx.AsyncClient = request.app.state.http_client
+    # In a real app, we'd get admin_id from auth token
+    log_data = {
+        "action": action,
+        "target": target,
+        "details": details or {}
+    }
+    await client.post(f"{SUPABASE_URL}/rest/v1/admin_logs", headers=_admin_headers(), json=log_data)
+
 # --- Categories ---
 @router.get("/categories", response_model=List[Category])
 async def get_categories(request: Request):
@@ -97,12 +108,15 @@ async def get_categories(request: Request):
 async def add_category(cat: Category, request: Request):
     client: httpx.AsyncClient = request.app.state.http_client
     resp = await client.post(f"{SUPABASE_URL}/rest/v1/categories", headers=_admin_headers(), json=cat.dict(exclude_none=True))
-    return resp.json()[0]
+    data = resp.json()[0]
+    await _log_action(request, "CREATE_CATEGORY", f"Category: {cat.name}", data)
+    return data
 
 @router.delete("/categories/{cat_id}")
 async def delete_category(cat_id: str, request: Request):
     client: httpx.AsyncClient = request.app.state.http_client
     await client.delete(f"{SUPABASE_URL}/rest/v1/categories?id=eq.{cat_id}", headers=_admin_headers())
+    await _log_action(request, "DELETE_CATEGORY", f"ID: {cat_id}")
     return {"status": "deleted"}
 
 # --- Tutorials ---
@@ -116,7 +130,9 @@ async def get_tutorials(request: Request):
 async def add_tutorial(tut: Tutorial, request: Request):
     client: httpx.AsyncClient = request.app.state.http_client
     resp = await client.post(f"{SUPABASE_URL}/rest/v1/tutorials", headers=_admin_headers(), json=tut.dict(exclude_none=True))
-    return resp.json()[0]
+    data = resp.json()[0]
+    await _log_action(request, "CREATE_TUTORIAL", f"Tutorial: {tut.title}", data)
+    return data
 
 # --- Feedback ---
 @router.get("/feedback")
@@ -129,7 +145,9 @@ async def get_feedback(request: Request):
 async def update_feedback(fb_id: str, body: FeedbackUpdate, request: Request):
     client: httpx.AsyncClient = request.app.state.http_client
     resp = await client.patch(f"{SUPABASE_URL}/rest/v1/feedback?id=eq.{fb_id}", headers=_admin_headers(), json=body.dict())
-    return resp.json()[0]
+    data = resp.json()[0]
+    await _log_action(request, "UPDATE_FEEDBACK", f"ID: {fb_id}", {"approved": body.is_approved})
+    return data
 
 # --- Challenges ---
 @router.get("/challenges")
@@ -142,12 +160,15 @@ async def get_challenges(request: Request):
 async def add_challenge(chal: Challenge, request: Request):
     client: httpx.AsyncClient = request.app.state.http_client
     resp = await client.post(f"{SUPABASE_URL}/rest/v1/challenges", headers=_admin_headers(), json=chal.dict(exclude_none=True))
-    return resp.json()[0]
+    data = resp.json()[0]
+    await _log_action(request, "CREATE_CHALLENGE", f"Challenge: {chal.title}", data)
+    return data
 
 @router.delete("/challenges/{chal_id}")
 async def delete_challenge(chal_id: str, request: Request):
     client: httpx.AsyncClient = request.app.state.http_client
     await client.delete(f"{SUPABASE_URL}/rest/v1/challenges?id=eq.{chal_id}", headers=_admin_headers())
+    await _log_action(request, "DELETE_CHALLENGE", f"ID: {chal_id}")
     return {"status": "deleted"}
 
 # --- Users & Points ---
@@ -164,7 +185,31 @@ async def get_users(request: Request, search: Optional[str] = None):
 async def update_user_points(user_id: str, body: PointUpdate, request: Request):
     client: httpx.AsyncClient = request.app.state.http_client
     resp = await client.patch(f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{user_id}", headers=_admin_headers(), json={"points": body.points})
+    await _log_action(request, "UPDATE_POINTS", f"User: {user_id}", {"new_points": body.points})
     return {"status": "updated", "points": body.points}
+
+class BulkAction(BaseModel):
+    user_ids: List[str]
+    points: Optional[int] = None
+    message: Optional[str] = None
+
+@router.post("/users/bulk")
+async def bulk_user_action(body: BulkAction, request: Request):
+    client: httpx.AsyncClient = request.app.state.http_client
+    if body.points is not None:
+        # Note: Ideally a single SQL query, but for REST we loop or use RPC
+        for uid in body.user_ids:
+            # First get current points
+            p_resp = await client.get(f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{uid}&select=points", headers=_admin_headers())
+            current = p_resp.json()[0].get("points", 0) if p_resp.json() else 0
+            await client.patch(f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{uid}", headers=_admin_headers(), json={"points": current + body.points})
+        await _log_action(request, "BULK_POINTS", f"{len(body.user_ids)} users", {"added": body.points})
+    
+    if body.message:
+        # Broadcast logic for subset
+        await _log_action(request, "BULK_BROADCAST", f"{len(body.user_ids)} users", {"msg": body.message})
+        
+    return {"status": "bulk_completed"}
 
 # --- Referrals ---
 @router.get("/referrals")
@@ -197,8 +242,17 @@ async def get_system_config(request: Request):
 async def update_system_config(body: ConfigUpdate, request: Request):
     client: httpx.AsyncClient = request.app.state.http_client
     resp = await client.patch(f"{SUPABASE_URL}/rest/v1/system_config?key=eq.{body.key}", headers=_admin_headers(), json={"value": body.value})
+    await _log_action(request, "UPDATE_CONFIG", f"Key: {body.key}", body.value)
     return {"status": "updated"}
 
 @router.post("/broadcast")
 async def send_broadcast(body: dict, request: Request):
+    await _log_action(request, "BROADCAST", "All Users", {"msg": body.get("message")})
     return {"status": "broadcast_sent", "target": "all_users"}
+
+# --- Activity Logs ---
+@router.get("/logs")
+async def get_admin_logs(request: Request):
+    client: httpx.AsyncClient = request.app.state.http_client
+    resp = await client.get(f"{SUPABASE_URL}/rest/v1/admin_logs?order=created_at.desc&limit=50", headers=_admin_headers())
+    return resp.json()
