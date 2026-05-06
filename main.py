@@ -13,7 +13,7 @@ import sys
 import httpx
 
 # Validate critical environment variables
-REQUIRED_VARS = ["SUPABASE_URL", "SUPABASE_ANON_KEY"]
+REQUIRED_VARS = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "RESEND_API_KEY"]
 missing = [v for v in REQUIRED_VARS if not os.getenv(v)]
 
 # Service key check (can be named either way)
