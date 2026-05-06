@@ -204,13 +204,14 @@ async def setup_profile(
             )
             
             # 3. Create a notification for the referrer
+            new_user_name = body.name or "A friend"
             await client.post(
                 f"{SUPABASE_URL}/rest/v1/user_notifications",
                 headers=_user_headers(user["token"]),
                 json={
                     "user_id": referrer['id'],
                     "title": "🎉 Referral Bonus!",
-                    "message": f"Someone joined using your code. You earned 10,000 coins!",
+                    "message": f"{new_user_name} joined using your code. You earned 10,000 coins!",
                     "type": "referral"
                 }
             )
