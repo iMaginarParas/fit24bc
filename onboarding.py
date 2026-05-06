@@ -362,16 +362,19 @@ async def upload_avatar(
     if user.get("phone"): update_payload["phone"] = user["phone"]
     # Email is not currently a column in user_profiles based on docstring, but if it was we'd add it here.
     
-    db_url = f"{SUPABASE_URL}/rest/v1/user_profiles"
+    db_url = f"{SUPABASE_URL}/rest/v1/user_profiles?on_conflict=id"
     
-    await client.post(
+    db_resp = await client.post(
         db_url,
         headers={
             **_user_headers(user["token"]),
-            "Prefer": "resolution=merge-duplicates",
+            "Prefer": "return=minimal,resolution=merge-duplicates",
         },
         json=update_payload,
     )
+    
+    if db_resp.status_code not in (200, 201, 204):
+        raise _sb_error(db_resp)
     
     return {"avatar_url": public_url}
 
