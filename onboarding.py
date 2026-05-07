@@ -497,29 +497,85 @@ async def get_my_notifications(request: Request, user: dict = Depends(_get_user)
 
 @router.get("/me/network")
 async def get_my_network(request: Request, user: dict = Depends(_get_user)):
-    """Fetch the list of users referred by the current user."""
+    """
+    Fetch the multi-level referral network (up to 10 levels).
+    Returns summary of points and lists of users per level.
+    """
     client: httpx.AsyncClient = request.app.state.http_client
     
-    # 1. Get the current user's referral code
+    # 1. Get current user profile
     profile = await get_profile(request, user)
-    code = profile.referral_code
-    if not code:
-        return []
+    root_code = profile.referral_code
+    if not root_code:
+        return {"summary": {"direct_points": 0, "indirect_points": 0, "total_users": 0}, "levels": []}
         
-    # 2. Find everyone who was referred by this code
-    url = f"{SUPABASE_URL}/rest/v1/user_profiles?referred_by=eq.{code}&order=created_at.asc"
-    resp = await client.get(url, headers=_user_headers(user["token"]))
-    if resp.status_code != 200:
-        raise _sb_error(resp)
+    levels_data = []
+    total_users = 0
+    direct_points = 0
+    indirect_points = 0
     
-    # Return basic info (name, joined_at) to avoid leaking private data
-    network = []
-    for row in resp.json():
-        network.append({
-            "name": row.get("name") or "New User",
-            "joined_at": row.get("created_at")
+    # We'll use a breadth-first approach to fetch levels
+    current_level_codes = [root_code]
+    
+    for level in range(1, 11): # Level 1 to 10
+        if not current_level_codes:
+            break
+            
+        # Find all users referred by the codes in the previous level
+        # Supabase filter: referred_by.in.(code1,code2,...)
+        codes_str = ",".join(current_level_codes)
+        url = f"{SUPABASE_URL}/rest/v1/user_profiles?referred_by=in.({codes_str})&order=created_at.asc"
+        
+        # Use Service Role for broad fetching
+        resp = await client.get(url, headers=_service_headers())
+        if resp.status_code != 200:
+            break
+            
+        rows = resp.json()
+        if not rows:
+            break
+            
+        level_users = []
+        next_level_codes = []
+        
+        for row in rows:
+            level_users.append({
+                "name": row.get("name") or "New User",
+                "joined_at": row.get("created_at"),
+                "avatar_url": row.get("avatar_url"),
+                "city": row.get("city")
+            })
+            if row.get("referral_code"):
+                next_level_codes.append(row["referral_code"])
+        
+        count = len(level_users)
+        total_users += count
+        
+        # Points Logic: Level 1 = 10k, Level 2-10 = 1k
+        pts = count * (10000 if level == 1 else 1000)
+        if level == 1:
+            direct_points += pts
+        else:
+            indirect_points += pts
+            
+        levels_data.append({
+            "level": level,
+            "count": count,
+            "points_earned": pts,
+            "users": level_users
         })
-    return network
+        
+        current_level_codes = next_level_codes
+
+    return {
+        "summary": {
+            "direct_points": direct_points,
+            "indirect_points": indirect_points,
+            "total_points": direct_points + indirect_points,
+            "total_users": total_users
+        },
+        "levels": levels_data
+    }
 
 @router.post("/spin-win")
 async def record_spin_win(request: Request, payload: dict, user: dict = Depends(_get_user)):
