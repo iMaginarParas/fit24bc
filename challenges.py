@@ -66,15 +66,46 @@ class ClaimResponse(BaseModel):
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
-@router.get("/", response_model=List[Challenge])
+@router.get("/", response_model=List[dict])
 async def list_challenges(request: Request, user: dict = Depends(_get_user)):
-    """Fetch all available challenges."""
+    """Fetch all available challenges and their claim status for today."""
     client: httpx.AsyncClient = request.app.state.http_client
+    today = datetime.now().strftime("%Y-%m-%d")
+    
+    # 1. Fetch all challenges
     url = f"{SUPABASE_URL}/rest/v1/challenges?select=*"
     resp = await client.get(url, headers=_user_headers(user["token"]))
-    if resp.status_code != 200:
-        return [] # Fallback to empty if table doesn't exist yet
-    return resp.json()
+    challenges = resp.json() if resp.status_code == 200 else []
+
+    # 2. Fetch user's claims for today
+    claims_url = f"{SUPABASE_URL}/rest/v1/user_claims?user_id=eq.{user['id']}&date=eq.{today}&select=challenge_id"
+    claims_resp = await client.get(claims_url, headers=_user_headers(user["token"]))
+    claimed_ids = {c["challenge_id"] for c in claims_resp.json()} if claims_resp.status_code == 200 else set()
+
+    # 3. Add claim status to each challenge
+    for c in challenges:
+        c["is_claimed"] = c["id"] in claimed_ids
+
+    # 4. Ensure Daily Check-in is in the list (if not in DB yet)
+    DAILY_CHECKIN_ID = "00000000-0000-0000-0000-000000000001"
+    if not any(c["id"] == DAILY_CHECKIN_ID for c in challenges):
+        challenges.insert(0, {
+            "id": DAILY_CHECKIN_ID,
+            "title": "Daily Show Up",
+            "description": "Earn 200 points just for opening the app!",
+            "reward_coins": 200,
+            "requirement_type": "checkin",
+            "requirement_value": 1,
+            "is_daily": True,
+            "is_claimed": DAILY_CHECKIN_ID in claimed_ids
+        })
+    else:
+        # Move it to the top if it exists
+        daily = next(c for c in challenges if c["id"] == DAILY_CHECKIN_ID)
+        challenges.remove(daily)
+        challenges.insert(0, daily)
+
+    return challenges
 
 @router.post("/claim/{challenge_id}", response_model=ClaimResponse)
 async def claim_reward(challenge_id: str, request: Request, user: dict = Depends(_get_user)):
