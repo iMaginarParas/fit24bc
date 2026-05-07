@@ -172,6 +172,9 @@ class HistoryResponse(BaseModel):
 class LeaderEntry(BaseModel):
     rank: int
     user_id: str
+    name: Optional[str] = "Fit24 Athlete"
+    avatar_url: Optional[str] = None
+    city: Optional[str] = "Active Member"
     steps: int
     fit_points: int
 
@@ -506,15 +509,29 @@ async def get_leaderboard(
     # Sort by total points
     sorted_users = sorted(points.items(), key=lambda x: x[1], reverse=True)[:50]
 
-    entries = [
-        LeaderEntry(
+    # Fetch profile details for these users
+    user_ids = [uid for uid, _ in sorted_users]
+    profiles_map = {}
+    if user_ids:
+        ids_str = ",".join(user_ids)
+        url_profiles = f"{SUPABASE_URL}/rest/v1/user_profiles?id=in.({ids_str})&select=id,name,avatar_url,city"
+        resp_p = await client.get(url_profiles, headers=_service_headers())
+        if resp_p.status_code == 200:
+            for p in resp_p.json():
+                profiles_map[p["id"]] = p
+
+    entries = []
+    for i, (uid, pts) in enumerate(sorted_users):
+        p = profiles_map.get(uid, {})
+        entries.append(LeaderEntry(
             rank       = i + 1,
             user_id    = uid,
+            name       = p.get("name", "Elite Athlete"),
+            avatar_url = p.get("avatar_url"),
+            city       = p.get("city", "Active Member"),
             steps      = totals.get(uid, 0),
             fit_points = pts,
-        )
-        for i, (uid, pts) in enumerate(sorted_users)
-    ]
+        ))
 
     return LeaderboardResponse(
         week_start = str(start_date),
