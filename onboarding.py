@@ -513,6 +513,7 @@ async def get_my_network(request: Request, user: dict = Depends(_get_user)):
     total_users = 0
     direct_points = 0
     indirect_points = 0
+    network_ids = []
     
     # We'll use a breadth-first approach to fetch levels
     current_level_codes = [root_code]
@@ -539,6 +540,9 @@ async def get_my_network(request: Request, user: dict = Depends(_get_user)):
         next_level_codes = []
         
         for row in rows:
+            uid = row.get("id")
+            if uid: network_ids.append(uid)
+            
             level_users.append({
                 "name": row.get("name") or "New User",
                 "joined_at": row.get("created_at"),
@@ -567,12 +571,50 @@ async def get_my_network(request: Request, user: dict = Depends(_get_user)):
         
         current_level_codes = next_level_codes
 
+    # 2. Group activity of all network members for growth trend
+    from datetime import datetime, timedelta
+    today = datetime.utcnow().date()
+    since = (today - timedelta(days=6))
+    daily_points = { (today - timedelta(days=i)): 0 for i in range(7) }
+    
+    if network_ids:
+        # Batch IDs to avoid URL length issues
+        ids_str = ",".join(network_ids)
+        
+        # Query Step Logs
+        stats_url = f"{SUPABASE_URL}/rest/v1/step_logs?user_id=in.({ids_str})&log_date=gte.{since.isoformat()}"
+        resp_stats = await client.get(stats_url, headers=_service_headers())
+        if resp_stats.status_code == 200:
+            for r in resp_stats.json():
+                try:
+                    d = datetime.fromisoformat(r['log_date']).date()
+                    if d in daily_points:
+                        daily_points[d] += r.get("fit_points", 0)
+                except: pass
+
+        # Query Activity Sessions
+        sess_url = f"{SUPABASE_URL}/rest/v1/activity_sessions?user_id=in.({ids_str})&created_at=gte.{since.isoformat()}T00:00:00Z"
+        resp_sess = await client.get(sess_url, headers=_service_headers())
+        if resp_sess.status_code == 200:
+            for s in resp_sess.json():
+                try:
+                    d = datetime.fromisoformat(s['created_at'].replace('Z', '+00:00')).date()
+                    if d in daily_points:
+                        daily_points[d] += s.get("fit_points", 0)
+                except: pass
+    
+    trend = [
+        {"date": d.isoformat(), "points": daily_points[d]}
+        for d in sorted(daily_points.keys())
+    ]
+
     return {
         "summary": {
             "direct_points": direct_points,
             "indirect_points": indirect_points,
             "total_points": direct_points + indirect_points,
-            "total_users": total_users
+            "total_users": total_users,
+            "earnings_trend": trend
         },
         "levels": levels_data
     }
