@@ -33,7 +33,6 @@ SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
 SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_SERVICE_KEY", "")
 RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "")
-RESEND_FROM_EMAIL: str = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
 
 if not SUPABASE_URL or not SUPABASE_ANON_KEY:
     import sys
@@ -202,7 +201,7 @@ async def send_otp(body: SendOtpRequest, request: Request):
         if RESEND_API_KEY:
             try:
                 resend.Emails.send({
-                    "from": f"Fit24 <{RESEND_FROM_EMAIL}>",
+                    "from": "FIT24 <hello@fit24.global>",
                     "to": body.email,
                     "subject": f"Your Fit24 Verification Code: {otp_code}",
                     "html": f"""
@@ -219,13 +218,9 @@ async def send_otp(body: SendOtpRequest, request: Request):
                     """
                 })
             except Exception as e:
-                error_msg = str(e)
-                print(f"Error sending email via Resend: {error_msg}")
-                if "testing emails" in error_msg.lower():
-                    raise HTTPException(
-                        status_code=403, 
-                        detail="Resend is in test mode. Please verify your domain at resend.com to send to other emails."
-                    )
+                print(f"Error sending email via Resend: {e}")
+                # Fallback to Supabase OTP if Resend fails? 
+                # For now, we'll just error out to let the user know something is wrong with Resend.
                 raise HTTPException(status_code=500, detail="Failed to send verification email.")
         else:
             # Fallback to Supabase default (useful if API key is not set yet)
