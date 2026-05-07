@@ -379,23 +379,28 @@ async def verify_otp(body: VerifyOtpRequest, request: Request):
         # Actually, let's use the Supabase `verify` endpoint with the token we generated? 
         # No, Supabase won't recognize it.
         
-        # Final decision for the implementation:
-        # I will implement the Resend sending logic in `send_otp`.
-        # I will advise the user that for `verify_otp` to work perfectly with Supabase sessions, 
-        # the simplest way is to put the API key into Supabase Dashboard -> Auth -> SMTP.
-        # If they still want it in code, I'll provide the custom table and manual session creation.
+        # 4. Success! Now we need to get a real session from Supabase.
+        # We use the admin API to generate a magic link, then verify it internally to get tokens.
+        link_resp = await client.post(
+            f"{SUPABASE_URL}/auth/v1/admin/generate_link", 
+            headers=_get_supabase_admin_headers(), 
+            json={"type": "magiclink", "email": body.email}
+        )
         
-        # I'll revert to a simpler integration that just uses Resend for the *email* 
-        # but still tries to use Supabase for the *logic* if possible.
-        # But since I can't get the code from Supabase, I'll do the manual way.
+        if link_resp.status_code != 200:
+            raise _supabase_error(link_resp)
         
-        # Re-evaluating... If I use the custom table, I can't easily get a standard Supabase session.
-        # UNLESS I use the `admin.generate_link` which DOES return a user.
+        link_data = link_resp.json()
+        token_hash = link_data.get("hashed_token")
         
-        # Let's use the Supabase `/auth/v1/verify` with `type=email` and the code.
-        # For this to work, we need Supabase to have generated that code.
-        
-        # Okay, I'll keep the current logic but add a comment explaining the trade-off.
+        if not token_hash:
+            raise HTTPException(status_code=500, detail="Failed to generate session token.")
+
+        payload = {
+            "token_hash": token_hash,
+            "type": "magiclink"
+        }
+
     elif body.phone:
         payload = {
             "phone": body.phone,
