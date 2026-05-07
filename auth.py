@@ -260,6 +260,7 @@ async def verify_otp(body: VerifyOtpRequest, request: Request):
     Verifies the 6-digit OTP received via Email or SMS.
     """
     client: httpx.AsyncClient = request.app.state.http_client
+    payload = None
 
     if body.email:
         # ── Custom OTP Verification (Resend Flow) ──
@@ -282,39 +283,38 @@ async def verify_otp(body: VerifyOtpRequest, request: Request):
         # OTP is valid! Now we need to get/create the user in Supabase Auth
         # and generate a session for them.
         
-        # 1. Try to find user by email
-        admin_url = f"{SUPABASE_URL}/auth/v1/admin/users"
-        # Supabase admin API for getting user by email is a bit tricky, easier to just try creating/updating
-        
-        # 2. Get or Create user and sign in
-        # We can use the magiclink/otp endpoint internally or just use the admin API to create a session.
-        # Actually, the easiest way to get tokens is to use /auth/v1/otp with a fixed password 
-        # OR better: use the admin API to create the user if they don't exist, and then 
-        # use the admin API to create a session.
-        
-        user_id = None
         user_email = body.email
         
-        # Check if user exists
-        check_resp = await client.get(f"{SUPABASE_URL}/rest/v1/user_profiles?email=eq.{user_email}&select=id", headers=_get_supabase_admin_headers())
-        if check_resp.status_code == 200 and check_resp.json():
-            user_id = check_resp.json()[0]["id"]
+        # 1. Generate a magic link to get a token_hash
+        # If user doesn't exist, this might fail, so we'll handle it.
+        link_resp = await client.post(
+            f"{SUPABASE_URL}/auth/v1/admin/generate_link", 
+            headers=_get_supabase_admin_headers(), 
+            json={"type": "magiclink", "email": user_email}
+        )
         
-        if not user_id:
-            # Create user if signup
+        if link_resp.status_code == 404 or (link_resp.status_code == 400 and "not found" in link_resp.text.lower()):
+            # User doesn't exist, create them
             if body.mode == "signup":
-                create_payload = {"email": user_email, "email_confirm": True}
-                create_resp = await client.post(admin_url, headers=_get_supabase_admin_headers(), json=create_payload)
+                create_resp = await client.post(
+                    f"{SUPABASE_URL}/auth/v1/admin/users", 
+                    headers=_get_supabase_admin_headers(), 
+                    json={"email": user_email, "email_confirm": True}
+                )
                 if create_resp.status_code not in (200, 201):
-                    # User might already exist in auth.users but not profiles
-                    if create_resp.status_code == 422: # Already exists
-                        pass
-                    else:
-                        raise _supabase_error(create_resp)
+                    raise _supabase_error(create_resp)
+                
+                # Try generating link again now that user exists
+                link_resp = await client.post(
+                    f"{SUPABASE_URL}/auth/v1/admin/generate_link", 
+                    headers=_get_supabase_admin_headers(), 
+                    json={"type": "magiclink", "email": user_email}
+                )
             else:
-                # For login, if user doesn't exist, it's an error
-                # But typically we auto-signup if it's a "login" that looks like signup
-                pass
+                raise HTTPException(status_code=404, detail="User not found. Please sign up.")
+
+        if link_resp.status_code != 200:
+            raise _supabase_error(link_resp)
 
         # 3. Generate tokens. Since we don't have a password, we can use the admin API 
         # to generate a magic link or just use a custom token if we had a custom JWT secret.
