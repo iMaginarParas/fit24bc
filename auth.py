@@ -200,9 +200,8 @@ async def send_otp(body: SendOtpRequest, request: Request):
         # Send via Resend
         if RESEND_API_KEY:
             try:
-                # Use the modern lowercase attribute if available, or fallback to class-based
-                sender = getattr(resend, "emails", resend.Emails)
-                sender.send({
+                # Standard way for resend-python SDK
+                resend.Emails.send({
                     "from": "FIT24 <hello@fit24.global>",
                     "to": body.email,
                     "subject": f"Your Fit24 Verification Code: {otp_code}",
