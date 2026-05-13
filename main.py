@@ -62,6 +62,17 @@ app.include_router(config_router,  prefix="/config",  tags=["Config"])
 app.include_router(challenges_router, prefix="/challenges", tags=["Challenges"])
 
 
+from fastapi.responses import HTMLResponse
+
 @app.get("/health", tags=["Health"])
 async def health():
     return {"status": "ok", "app": "Fit24", "version": "1.2.4"}
+
+@app.get("/privacy", tags=["Legal"], response_class=HTMLResponse)
+async def privacy_policy():
+    """Serves the privacy policy HTML page for Google Play compliance."""
+    try:
+        with open("privacy.html", "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return "Privacy policy not found."
