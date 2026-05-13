@@ -200,7 +200,9 @@ async def send_otp(body: SendOtpRequest, request: Request):
         # Send via Resend
         if RESEND_API_KEY:
             try:
-                resend.Emails.send({
+                # Use the modern lowercase attribute if available, or fallback to class-based
+                sender = getattr(resend, "emails", resend.Emails)
+                sender.send({
                     "from": "FIT24 <hello@fit24.global>",
                     "to": body.email,
                     "subject": f"Your Fit24 Verification Code: {otp_code}",
@@ -219,9 +221,23 @@ async def send_otp(body: SendOtpRequest, request: Request):
                 })
             except Exception as e:
                 print(f"Error sending email via Resend: {e}")
-                # Fallback to Supabase OTP if Resend fails? 
-                # For now, we'll just error out to let the user know something is wrong with Resend.
-                raise HTTPException(status_code=500, detail="Failed to send verification email.")
+                # Fallback to Supabase native OTP if Resend fails
+                print("Falling back to Supabase native OTP...")
+                payload = {
+                    "email": body.email, 
+                    "create_user": body.mode == "signup"
+                }
+                url = f"{SUPABASE_URL}/auth/v1/otp"
+                resp = await client.post(url, headers=_get_supabase_headers(), json=payload)
+                if resp.status_code not in (200, 204):
+                    # If even Supabase fails, then we really have an issue
+                    detail = f"Failed to send verification email. Resend error: {str(e)}. Supabase error: {resp.text}"
+                    raise HTTPException(status_code=500, detail=detail)
+                
+                return SendOtpResponse(
+                    message="OTP sent successfully via fallback. Check your email.",
+                    phone=body.email,
+                )
         else:
             # Fallback to Supabase default (useful if API key is not set yet)
             payload = {
@@ -272,7 +288,34 @@ async def verify_otp(body: VerifyOtpRequest, request: Request):
         
         otps = resp.json()
         if not otps:
-            raise HTTPException(status_code=400, detail="Invalid or expired OTP.")
+            # Fallback: Try verifying directly with Supabase (in case of fallback/native OTP)
+            print(f"OTP not found in custom table for {body.email}. Trying native Supabase verification...")
+            payload = {
+                "email": body.email,
+                "token": body.token,
+                "type": "signup" if body.mode == "signup" else "email",
+            }
+            # Skip the rest of the custom logic and jump to native verification
+            url = f"{SUPABASE_URL}/auth/v1/verify"
+            resp = await client.post(url, headers=_get_supabase_headers(), json=payload)
+            if resp.status_code == 200:
+                # Success! Skip to response handling
+                data = resp.json()
+                sb_user = data.get("user") or {}
+                sb_session = data.get("session") or {}
+                access_token = sb_session.get("access_token") or data.get("access_token")
+                refresh_token_ = sb_session.get("refresh_token") or data.get("refresh_token")
+                token_type = sb_session.get("token_type") or data.get("token_type", "bearer")
+                expires_in = sb_session.get("expires_in") or data.get("expires_in", 3600)
+                
+                return VerifyOtpResponse(
+                    message="Verified successfully via native provider.",
+                    user=UserProfile(id=sb_user["id"], phone=sb_user.get("phone"), email=sb_user.get("email")),
+                    tokens=AuthTokens(access_token=access_token, refresh_token=refresh_token_, token_type=token_type, expires_in=expires_in),
+                )
+            else:
+                # If even native fails, then it's really invalid
+                raise HTTPException(status_code=400, detail="Invalid or expired OTP.")
         
         otp_data = otps[0]
         # Check expiration
@@ -282,11 +325,9 @@ async def verify_otp(body: VerifyOtpRequest, request: Request):
 
         # OTP is valid! Now we need to get/create the user in Supabase Auth
         # and generate a session for them.
-        
         user_email = body.email
         
         # 1. Generate a magic link to get a token_hash
-        # If user doesn't exist, this might fail, so we'll handle it.
         link_resp = await client.post(
             f"{SUPABASE_URL}/auth/v1/admin/generate_link", 
             headers=_get_supabase_admin_headers(), 
@@ -315,84 +356,14 @@ async def verify_otp(body: VerifyOtpRequest, request: Request):
 
         if link_resp.status_code != 200:
             raise _supabase_error(link_resp)
-
-        # 3. Generate tokens. Since we don't have a password, we can use the admin API 
-        # to generate a magic link or just use a custom token if we had a custom JWT secret.
-        # However, the standard way is to use Supabase's sign-in.
-        
-        # Let's use the 'otp' verification from Supabase as a fallback if possible, 
-        # but since we sent our own, we'll use the 'admin' API to get a session.
-        # Actually, Supabase Admin API doesn't have a direct "create session for user" endpoint that returns tokens easily.
-        # BUT, we can use `admin.generate_link` and then exchange it? No.
-        
-        # Alternative: Use the 'otp' verify endpoint with our 'fake' verification? No.
-        
-        # REAL SOLUTION: Use Supabase's built-in OTP for the *verification* part 
-        # but our own for the *sending* part? 
-        # To do that, we'd need to get the OTP from Supabase without it sending.
-        # Supabase doesn't support that easily.
-        
-        # So we'll use our own verification and then use the Admin API to get the user.
-        # To get a session, we can use `supabase.auth.admin.generate_link(type='magiclink', email=email)`
-        # and it returns a link with a token.
-        
-        link_resp = await client.post(f"{SUPABASE_URL}/auth/v1/admin/generate_link", 
-                                     headers=_get_supabase_admin_headers(), 
-                                     json={"type": "magiclink", "email": user_email})
-        
-        if link_resp.status_code != 200:
-            raise _supabase_error(link_resp)
-        
-        link_data = link_resp.json()
-        # The link_data contains the user and a 'hashed_token' or similar.
-        # We can actually just return the user data and tokens from here if we can.
-        # But generate_link doesn't return the access_token.
-        
-        # WAIT! If we have the email verified, we can just sign them in with a password-less flow.
-        # Let's just use the Supabase OTP verification after all, but we need to make sure 
-        # Supabase generated the OTP we are verifying.
-        
-        # If the user wants to use Resend, the BEST way is to configure Resend in Supabase Dashboard.
-        # If I do it in code, I'm fighting the framework.
-        
-        # HOWEVER, if I MUST do it in code, I will use a custom JWT if I had the secret, 
-        # but I don't want to expose that.
-        
-        # Let's try this: Use the Supabase OTP endpoint to generate the OTP, 
-        # and then intercept the sending? Not possible via API.
-        
-        # Okay, I'll stick to the custom verification and for the "tokens", 
-        # I'll use the generate_link and then perform a manual sign-in? 
-        # Actually, let's use the `user` object from `generate_link` and 
-        # then we need to get a session.
-        
-        # I'll use a trick: use `admin.update_user` to set a temporary password, 
-        # sign in, then unset it. (A bit hacky but works).
-        
-        # OR: Just use the `otp` verification and tell the user to configure Resend in Supabase.
-        # But the user said "i have a resend API key now for OTP", which implies they want it in code.
-        
-        # I will implement the custom verify logic and return a message saying 
-        # "Please configure Resend in Supabase for full session support" 
-        # OR I will try to get the tokens.
-        
-        # Actually, let's use the Supabase `verify` endpoint with the token we generated? 
-        # No, Supabase won't recognize it.
-        
-        # 4. Success! Now we need to get a real session from Supabase.
-        # We use the admin API to generate a magic link, then verify it internally to get tokens.
-        link_resp = await client.post(
-            f"{SUPABASE_URL}/auth/v1/admin/generate_link", 
-            headers=_get_supabase_admin_headers(), 
-            json={"type": "magiclink", "email": body.email}
-        )
-        
-        if link_resp.status_code != 200:
-            raise _supabase_error(link_resp)
         
         link_data = link_resp.json()
         token_hash = link_data.get("hashed_token")
         
+        if not token_hash:
+            # Some versions return it differently
+            token_hash = link_data.get("data", {}).get("hashed_token")
+            
         if not token_hash:
             raise HTTPException(status_code=500, detail="Failed to generate session token.")
 
