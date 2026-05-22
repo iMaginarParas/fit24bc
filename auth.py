@@ -22,6 +22,7 @@ import re
 import random
 import resend
 from datetime import datetime, timedelta
+from limiter import limiter
 
 load_dotenv()  # loads .env file if present (local dev)
 
@@ -167,7 +168,8 @@ class VerifyOtpResponse(BaseModel):
     status_code=status.HTTP_200_OK,
     summary="Send OTP (Email or Phone)",
 )
-async def send_otp(body: SendOtpRequest, request: Request):
+@limiter.limit("5/minute")
+async def send_otp(request: Request, body: SendOtpRequest):
     """
     Triggers OTP delivery. 
     - For Email: Uses Supabase (configure Resend in Supabase SMTP settings).
@@ -270,7 +272,8 @@ async def send_otp(body: SendOtpRequest, request: Request):
     status_code=status.HTTP_200_OK,
     summary="Verify OTP and get session tokens",
 )
-async def verify_otp(body: VerifyOtpRequest, request: Request):
+@limiter.limit("10/minute")
+async def verify_otp(request: Request, body: VerifyOtpRequest):
     """
     Verifies the 6-digit OTP received via Email or SMS.
     """

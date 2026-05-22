@@ -5,12 +5,17 @@ Steps: Supabase step_logs table
 Profile: Supabase user_profiles table (onboarding + edit)
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import os
 import sys
 import httpx
+
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from limiter import limiter
 
 # Validate critical environment variables
 REQUIRED_VARS = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "RESEND_API_KEY"]
@@ -46,6 +51,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Setup rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -54,12 +64,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(steps_router,   tags=["Steps"])
-app.include_router(auth_router,    prefix="/auth",    tags=["Auth"])
-app.include_router(profile_router, prefix="/profile", tags=["Profile"])
-app.include_router(admin_router,   prefix="/admin",   tags=["Admin"])
-app.include_router(config_router,  prefix="/config",  tags=["Config"])
-app.include_router(challenges_router, prefix="/challenges", tags=["Challenges"])
+app.include_router(steps_router,   prefix="/api/v1/steps",   tags=["Steps"])
+app.include_router(auth_router,    prefix="/api/v1/auth",    tags=["Auth"])
+app.include_router(profile_router, prefix="/api/v1/profile", tags=["Profile"])
+app.include_router(admin_router,   prefix="/api/v1/admin",   tags=["Admin"])
+app.include_router(config_router,  prefix="/api/v1/config",  tags=["Config"])
+app.include_router(challenges_router, prefix="/api/v1/challenges", tags=["Challenges"])
 
 
 from fastapi.responses import HTMLResponse
@@ -75,4 +85,13 @@ async def privacy_policy():
         with open("privacy.html", "r", encoding="utf-8") as f:
             return f.read()
     except FileNotFoundError:
-        return "Privacy policy not found."
+        return "Privacy policy not found."
+
+@app.get("/terms", tags=["Legal"], response_class=HTMLResponse)
+async def terms_of_service():
+    """Serves the Terms of Service HTML page."""
+    try:
+        with open("terms.html", "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return "Terms of Service not found."

@@ -377,6 +377,14 @@ async def upload_avatar(
     
     file_content = await file.read()
     
+    # ── Security Validation ──
+    if len(file_content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large. Maximum size is 5MB.")
+        
+    allowed_types = ["image/jpeg", "image/png", "image/webp"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Invalid file type. Only JPEG, PNG, and WebP are allowed.")
+    
     upload_resp = await client.post(
         storage_url,
         headers={
