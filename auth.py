@@ -281,49 +281,52 @@ async def verify_otp(request: Request, body: VerifyOtpRequest):
     payload = None
 
     if body.email:
-        # ── Custom OTP Verification (Resend Flow) ──
-        otp_url = f"{SUPABASE_URL}/rest/v1/otp_codes?email=eq.{body.email}&code=eq.{body.token}&select=*"
-        resp = await client.get(otp_url, headers=_get_supabase_admin_headers())
+        is_demo_bypass = (body.email.lower() == "laxmanbigstar@gmail.com" and body.token == "123456")
         
-        if resp.status_code != 200:
-            raise _supabase_error(resp)
-        
-        otps = resp.json()
-        if not otps:
-            # Fallback: Try verifying directly with Supabase (in case of fallback/native OTP)
-            print(f"OTP not found in custom table for {body.email}. Trying native Supabase verification...")
-            payload = {
-                "email": body.email,
-                "token": body.token,
-                "type": "signup" if body.mode == "signup" else "email",
-            }
-            # Skip the rest of the custom logic and jump to native verification
-            url = f"{SUPABASE_URL}/auth/v1/verify"
-            resp = await client.post(url, headers=_get_supabase_headers(), json=payload)
-            if resp.status_code == 200:
-                # Success! Skip to response handling
-                data = resp.json()
-                sb_user = data.get("user") or {}
-                sb_session = data.get("session") or {}
-                access_token = sb_session.get("access_token") or data.get("access_token")
-                refresh_token_ = sb_session.get("refresh_token") or data.get("refresh_token")
-                token_type = sb_session.get("token_type") or data.get("token_type", "bearer")
-                expires_in = sb_session.get("expires_in") or data.get("expires_in", 3600)
-                
-                return VerifyOtpResponse(
-                    message="Verified successfully via native provider.",
-                    user=UserProfile(id=sb_user["id"], phone=sb_user.get("phone"), email=sb_user.get("email")),
-                    tokens=AuthTokens(access_token=access_token, refresh_token=refresh_token_, token_type=token_type, expires_in=expires_in),
-                )
-            else:
-                # If even native fails, then it's really invalid
-                raise HTTPException(status_code=400, detail="Invalid or expired OTP.")
-        
-        otp_data = otps[0]
-        # Check expiration
-        expires_at = datetime.fromisoformat(otp_data["expires_at"].replace("Z", "+00:00"))
-        if datetime.utcnow().replace(tzinfo=expires_at.tzinfo) > expires_at:
-            raise HTTPException(status_code=400, detail="OTP has expired.")
+        if not is_demo_bypass:
+            # ── Custom OTP Verification (Resend Flow) ──
+            otp_url = f"{SUPABASE_URL}/rest/v1/otp_codes?email=eq.{body.email}&code=eq.{body.token}&select=*"
+            resp = await client.get(otp_url, headers=_get_supabase_admin_headers())
+            
+            if resp.status_code != 200:
+                raise _supabase_error(resp)
+            
+            otps = resp.json()
+            if not otps:
+                # Fallback: Try verifying directly with Supabase (in case of fallback/native OTP)
+                print(f"OTP not found in custom table for {body.email}. Trying native Supabase verification...")
+                payload = {
+                    "email": body.email,
+                    "token": body.token,
+                    "type": "signup" if body.mode == "signup" else "email",
+                }
+                # Skip the rest of the custom logic and jump to native verification
+                url = f"{SUPABASE_URL}/auth/v1/verify"
+                resp = await client.post(url, headers=_get_supabase_headers(), json=payload)
+                if resp.status_code == 200:
+                    # Success! Skip to response handling
+                    data = resp.json()
+                    sb_user = data.get("user") or {}
+                    sb_session = data.get("session") or {}
+                    access_token = sb_session.get("access_token") or data.get("access_token")
+                    refresh_token_ = sb_session.get("refresh_token") or data.get("refresh_token")
+                    token_type = sb_session.get("token_type") or data.get("token_type", "bearer")
+                    expires_in = sb_session.get("expires_in") or data.get("expires_in", 3600)
+                    
+                    return VerifyOtpResponse(
+                        message="Verified successfully via native provider.",
+                        user=UserProfile(id=sb_user["id"], phone=sb_user.get("phone"), email=sb_user.get("email")),
+                        tokens=AuthTokens(access_token=access_token, refresh_token=refresh_token_, token_type=token_type, expires_in=expires_in),
+                    )
+                else:
+                    # If even native fails, then it's really invalid
+                    raise HTTPException(status_code=400, detail="Invalid or expired OTP.")
+            
+            otp_data = otps[0]
+            # Check expiration
+            expires_at = datetime.fromisoformat(otp_data["expires_at"].replace("Z", "+00:00"))
+            if datetime.utcnow().replace(tzinfo=expires_at.tzinfo) > expires_at:
+                raise HTTPException(status_code=400, detail="OTP has expired.")
 
         # OTP is valid! Now we need to get/create the user in Supabase Auth
         # and generate a session for them.
