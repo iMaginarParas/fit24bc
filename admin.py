@@ -97,6 +97,63 @@ async def _log_action(request: Request, action: str, target: str, details: dict 
     }
     await client.post(f"{SUPABASE_URL}/rest/v1/admin_logs", headers=_admin_headers(), json=log_data)
 
+# --- Dashboard ---
+@router.get("/dashboard")
+async def get_dashboard_stats(request: Request):
+    client: httpx.AsyncClient = request.app.state.http_client
+    from datetime import date, timedelta
+    
+    # Total Users & Points Earned
+    users_resp = await client.get(f"{SUPABASE_URL}/rest/v1/user_profiles?select=points", headers=_admin_headers())
+    users_data = users_resp.json() if users_resp.status_code == 200 else []
+    total_users = len(users_data)
+    total_points = sum((u.get("points") or 0) for u in users_data)
+    
+    # Daily Active
+    today = date.today().isoformat()
+    da_resp = await client.get(f"{SUPABASE_URL}/rest/v1/step_logs?log_date=eq.{today}&select=user_id", headers=_admin_headers())
+    da_data = da_resp.json() if da_resp.status_code == 200 else []
+    daily_active = len(set(d["user_id"] for d in da_data))
+    
+    # Line Chart: Last 7 Days user activity (number of step_logs per day)
+    seven_days_ago = (date.today() - timedelta(days=6)).isoformat()
+    line_resp = await client.get(f"{SUPABASE_URL}/rest/v1/step_logs?log_date=gte.{seven_days_ago}&select=log_date", headers=_admin_headers())
+    line_data = line_resp.json() if line_resp.status_code == 200 else []
+    
+    # Aggregate by date
+    from collections import Counter
+    date_counts = Counter(d["log_date"] for d in line_data)
+    
+    labels = []
+    line_chart_data = []
+    for i in range(6, -1, -1):
+        d = date.today() - timedelta(days=i)
+        d_str = d.isoformat()
+        labels.append(d.strftime("%a"))  # Mon, Tue, etc.
+        line_chart_data.append(date_counts.get(d_str, 0))
+        
+    # Bar Chart: Activity Categories (Walking=0, Running=1, Cycling=2)
+    bar_resp = await client.get(f"{SUPABASE_URL}/rest/v1/activity_sessions?select=type", headers=_admin_headers())
+    bar_data = bar_resp.json() if bar_resp.status_code == 200 else []
+    
+    type_counts = Counter(s.get("type", 0) for s in bar_data)
+    # Walking, Running, Cycling, Others
+    bar_chart_data = [
+        type_counts.get(0, 0),
+        type_counts.get(1, 0),
+        type_counts.get(2, 0),
+        sum(count for t, count in type_counts.items() if t not in (0, 1, 2))
+    ]
+    
+    return {
+        "total_users": total_users,
+        "daily_active": daily_active,
+        "points_earned": total_points,
+        "line_labels": labels,
+        "line_data": line_chart_data,
+        "bar_data": bar_chart_data
+    }
+
 # --- Categories ---
 @router.get("/categories", response_model=List[Category])
 async def get_categories(request: Request):
