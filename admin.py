@@ -156,9 +156,12 @@ async def get_dashboard_stats(request: Request):
 
 # --- Categories ---
 @router.get("/categories", response_model=List[Category])
-async def get_categories(request: Request):
+async def get_categories(request: Request, search: Optional[str] = None):
     client: httpx.AsyncClient = request.app.state.http_client
-    resp = await client.get(f"{SUPABASE_URL}/rest/v1/categories?order=name", headers=_admin_headers())
+    url = f"{SUPABASE_URL}/rest/v1/categories?order=name"
+    if search:
+        url += f"&name=ilike.*{search}*"
+    resp = await client.get(url, headers=_admin_headers())
     return resp.json()
 
 @router.post("/categories")
@@ -178,9 +181,12 @@ async def delete_category(cat_id: str, request: Request):
 
 # --- Tutorials ---
 @router.get("/tutorials")
-async def get_tutorials(request: Request):
+async def get_tutorials(request: Request, search: Optional[str] = None):
     client: httpx.AsyncClient = request.app.state.http_client
-    resp = await client.get(f"{SUPABASE_URL}/rest/v1/tutorials", headers=_admin_headers())
+    url = f"{SUPABASE_URL}/rest/v1/tutorials"
+    if search:
+        url += f"?title=ilike.*{search}*"
+    resp = await client.get(url, headers=_admin_headers())
     return resp.json()
 
 @router.post("/tutorials")
@@ -191,11 +197,21 @@ async def add_tutorial(tut: Tutorial, request: Request):
     await _log_action(request, "CREATE_TUTORIAL", f"Tutorial: {tut.title}", data)
     return data
 
+@router.delete("/tutorials/{tut_id}")
+async def delete_tutorial(tut_id: str, request: Request):
+    client: httpx.AsyncClient = request.app.state.http_client
+    await client.delete(f"{SUPABASE_URL}/rest/v1/tutorials?id=eq.{tut_id}", headers=_admin_headers())
+    await _log_action(request, "DELETE_TUTORIAL", f"ID: {tut_id}")
+    return {"status": "deleted"}
+
 # --- Feedback ---
 @router.get("/feedback")
-async def get_feedback(request: Request):
+async def get_feedback(request: Request, search: Optional[str] = None):
     client: httpx.AsyncClient = request.app.state.http_client
-    resp = await client.get(f"{SUPABASE_URL}/rest/v1/feedback?select=*,user_profiles(name)", headers=_admin_headers())
+    url = f"{SUPABASE_URL}/rest/v1/feedback?select=*,user_profiles(name)"
+    if search:
+        url += f"&message=ilike.*{search}*"
+    resp = await client.get(url, headers=_admin_headers())
     return resp.json()
 
 @router.patch("/feedback/{fb_id}")
@@ -206,11 +222,21 @@ async def update_feedback(fb_id: str, body: FeedbackUpdate, request: Request):
     await _log_action(request, "UPDATE_FEEDBACK", f"ID: {fb_id}", {"approved": body.is_approved})
     return data
 
+@router.delete("/feedback/{fb_id}")
+async def delete_feedback(fb_id: str, request: Request):
+    client: httpx.AsyncClient = request.app.state.http_client
+    await client.delete(f"{SUPABASE_URL}/rest/v1/feedback?id=eq.{fb_id}", headers=_admin_headers())
+    await _log_action(request, "DELETE_FEEDBACK", f"ID: {fb_id}")
+    return {"status": "deleted"}
+
 # --- Challenges ---
 @router.get("/challenges")
-async def get_challenges(request: Request):
+async def get_challenges(request: Request, search: Optional[str] = None):
     client: httpx.AsyncClient = request.app.state.http_client
-    resp = await client.get(f"{SUPABASE_URL}/rest/v1/challenges", headers=_admin_headers())
+    url = f"{SUPABASE_URL}/rest/v1/challenges"
+    if search:
+        url += f"?title=ilike.*{search}*"
+    resp = await client.get(url, headers=_admin_headers())
     return resp.json()
 
 @router.post("/challenges")
