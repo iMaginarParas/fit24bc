@@ -290,6 +290,16 @@ async def bulk_user_action(body: BulkAction, request: Request):
     
     if body.message:
         # Broadcast logic for subset
+        for uid in body.user_ids:
+            await client.post(
+                f"{SUPABASE_URL}/rest/v1/notifications",
+                headers=_admin_headers(),
+                json={
+                    "user_id": uid,
+                    "title": "Admin Broadcast",
+                    "message": body.message
+                }
+            )
         await _log_action(request, "BULK_BROADCAST", f"{len(body.user_ids)} users", {"msg": body.message})
         
     return {"status": "bulk_completed"}
@@ -330,7 +340,18 @@ async def update_system_config(body: ConfigUpdate, request: Request):
 
 @router.post("/broadcast")
 async def send_broadcast(body: dict, request: Request):
-    await _log_action(request, "BROADCAST", "All Users", {"msg": body.get("message")})
+    client: httpx.AsyncClient = request.app.state.http_client
+    msg = body.get("message", "")
+    await client.post(
+        f"{SUPABASE_URL}/rest/v1/notifications",
+        headers=_admin_headers(),
+        json={
+            "user_id": None,
+            "title": "Global Broadcast",
+            "message": msg
+        }
+    )
+    await _log_action(request, "BROADCAST", "All Users", {"msg": msg})
     return {"status": "broadcast_sent", "target": "all_users"}
 
 # --- Activity Logs ---
