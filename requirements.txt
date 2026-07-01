@@ -6,3 +6,4 @@ python-dotenv>=1.0.0
 python-multipart>=0.0.9
 resend>=2.4.0
 slowapi>=0.1.9
+PyJWT>=2.8.0
