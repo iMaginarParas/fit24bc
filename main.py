@@ -90,16 +90,21 @@ async def debug_db(request: Request):
     }
     
     results = {}
-    for table in ["step_logs", "step_counts", "activity_sessions"]:
-        try:
-            resp = await client.get(f"{supabase_url}/rest/v1/{table}?select=*", headers=headers, params={"limit": "5"})
-            results[table] = {
-                "status": resp.status_code,
-                "sample": resp.json() if resp.status_code == 200 else resp.text
-            }
-        except Exception as e:
-            results[table] = {"error": str(e)}
-            
+    # Get total count of step_logs
+    try:
+        count_resp = await client.get(f"{supabase_url}/rest/v1/step_logs?select=count", headers=headers, params={"prefer": "count=exact"})
+        count_val = count_resp.headers.get("Content-Range", "").split("/")[-1]
+        
+        recent_resp = await client.get(f"{supabase_url}/rest/v1/step_logs?order=log_date.desc&limit=10", headers=headers)
+        
+        results["step_logs"] = {
+            "status": recent_resp.status_code,
+            "total_count": count_val,
+            "most_recent": recent_resp.json() if recent_resp.status_code == 200 else recent_resp.text
+        }
+    except Exception as e:
+        results["step_logs"] = {"error": str(e)}
+        
     return results
 
 @app.get("/privacy", tags=["Legal"], response_class=HTMLResponse)
