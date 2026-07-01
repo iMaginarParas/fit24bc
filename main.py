@@ -78,34 +78,7 @@ from fastapi.responses import HTMLResponse
 async def health():
     return {"status": "ok", "app": "Fit24", "version": "1.2.4"}
 
-@app.get("/debug-db")
-async def debug_db(request: Request):
-    client: httpx.AsyncClient = request.app.state.http_client
-    supabase_url = os.getenv("SUPABASE_URL", "")
-    supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", os.getenv("SUPABASE_SERVICE_KEY", os.getenv("SUPABASE_ANON_KEY", "")))
-    headers = {
-        "apikey": supabase_key,
-        "Authorization": f"Bearer {supabase_key}",
-        "Content-Type": "application/json"
-    }
-    
-    results = {}
-    # Get total count of step_logs
-    try:
-        count_resp = await client.get(f"{supabase_url}/rest/v1/step_logs?select=count", headers=headers, params={"prefer": "count=exact"})
-        count_val = count_resp.headers.get("Content-Range", "").split("/")[-1]
-        
-        recent_resp = await client.get(f"{supabase_url}/rest/v1/step_logs?order=log_date.desc&limit=10", headers=headers)
-        
-        results["step_logs"] = {
-            "status": recent_resp.status_code,
-            "total_count": count_val,
-            "most_recent": recent_resp.json() if recent_resp.status_code == 200 else recent_resp.text
-        }
-    except Exception as e:
-        results["step_logs"] = {"error": str(e)}
-        
-    return results
+
 
 @app.get("/privacy", tags=["Legal"], response_class=HTMLResponse)
 async def privacy_policy():
