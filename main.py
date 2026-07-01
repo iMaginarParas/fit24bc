@@ -78,6 +78,30 @@ from fastapi.responses import HTMLResponse
 async def health():
     return {"status": "ok", "app": "Fit24", "version": "1.2.4"}
 
+@app.get("/debug-db")
+async def debug_db(request: Request):
+    client: httpx.AsyncClient = request.app.state.http_client
+    supabase_url = os.getenv("SUPABASE_URL", "")
+    supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", os.getenv("SUPABASE_SERVICE_KEY", os.getenv("SUPABASE_ANON_KEY", "")))
+    headers = {
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {supabase_key}",
+        "Content-Type": "application/json"
+    }
+    
+    results = {}
+    for table in ["step_logs", "step_counts", "activity_sessions"]:
+        try:
+            resp = await client.get(f"{supabase_url}/rest/v1/{table}?select=*", headers=headers, params={"limit": "5"})
+            results[table] = {
+                "status": resp.status_code,
+                "sample": resp.json() if resp.status_code == 200 else resp.text
+            }
+        except Exception as e:
+            results[table] = {"error": str(e)}
+            
+    return results
+
 @app.get("/privacy", tags=["Legal"], response_class=HTMLResponse)
 async def privacy_policy():
     """Serves the privacy policy HTML page for Google Play compliance."""

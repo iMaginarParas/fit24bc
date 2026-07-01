@@ -30,6 +30,26 @@ router = APIRouter()
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
+# Admin single‑user credentials (can be overridden via env vars)
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@example.com")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
+
+# JWT secret for token signing (must be kept secret in production)
+JWT_SECRET = os.getenv("JWT_SECRET", "supersecretkey")
+
+import jwt
+from datetime import datetime, timedelta
+
+def _create_jwt(admin_id: str) -> str:
+    payload = {
+        "sub": admin_id,
+        "iat": datetime.utcnow(),
+        "exp": datetime.utcnow() + timedelta(hours=12),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+# Existing lines continue below
+
 SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
 SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_SERVICE_KEY", "")
@@ -508,3 +528,29 @@ async def refresh_token(refresh_token: str, request: Request):
         "expires_in": data.get("expires_in", 3600),
         "token_type": data.get("token_type", "bearer"),
     }
+
+# --- Admin Login Endpoint (single user) ---
+@router.post(
+    "/admin-login",
+    response_model=VerifyOtpResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Admin login with single user",
+)
+async def admin_login(request: Request, body: VerifyOtpRequest):
+    """Simple admin login that checks against a single set of credentials and returns a JWT.
+    Expects `email` and `token` (used as password) fields in the request body.
+    """
+    if body.email != ADMIN_EMAIL or body.token != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Invalid admin credentials")
+    token = _create_jwt(admin_id="admin")
+    admin_user = UserProfile(id="admin", email=ADMIN_EMAIL)
+    return VerifyOtpResponse(
+        message="Admin login successful",
+        user=admin_user,
+        tokens=AuthTokens(
+            access_token=token,
+            refresh_token="",
+            token_type="bearer",
+            expires_in=12 * 3600,
+        ),
+    )
